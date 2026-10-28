@@ -18,7 +18,7 @@ pub enum OutputDir {
 /// Used when the source's folder can't be written to (read-only media, protected folders).
 pub fn fallback_dir() -> PathBuf {
     let home = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    home.join("Downloads").join("File Beaver")
+    home.join("Downloads").join("con-vert")
 }
 
 pub fn target_dir(src: &Path, out: &OutputDir) -> PathBuf {

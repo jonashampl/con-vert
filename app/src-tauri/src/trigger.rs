@@ -87,8 +87,10 @@ pub struct Hooks {
     pub on_ring: Box<dyn Fn(RingEvent) + Send + Sync>,
     /// (segment id such as "tool:crop", dropped paths)
     pub on_drop: Box<dyn Fn(String, Vec<String>) + Send + Sync>,
-    /// Where the floating beaver was last left; None = default corner.
+    /// Where the floating icon was last left; None = default corner.
     pub beaver_pos: Option<(i32, i32)>,
+    /// Its size in logical px.
+    pub icon_size: i32,
     pub on_beaver: Box<dyn Fn(crate::beaver::BeaverEvent) + Send + Sync>,
 }
 
@@ -622,7 +624,7 @@ unsafe fn show_at(x: i32, y: i32) {
         *menu_lock() = None;
 
         // Capture before either window is visible.
-        let backdrop = capture::backdrop(cx - r, cy - r, 2 * r);
+        let backdrop = capture::backdrop(cx - r, cy - r, 2 * r, 2 * r);
         let (left, top) = (cx - win / 2, cy - win / 2);
         let beaver = crate::beaver::visible_rect().filter(|_| FROM_BEAVER.load(SeqCst)).map(|(l, t, rt, b)| {
             (((l + rt) / 2 - left) as f64 / scale, ((t + b) / 2 - top) as f64 / scale, (rt - l) as f64 / scale / 2.0)
@@ -808,7 +810,7 @@ unsafe fn run() -> Result<()> {
         RegisterClassW(&wc);
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            class, w!("File Beaver"), WS_POPUP,
+            class, w!("con/vert"), WS_POPUP,
             0, 0, 1, 1, None, None, hinst, None,
         )?;
         OVERLAY.store(hwnd.0 as isize, SeqCst);
@@ -819,7 +821,7 @@ unsafe fn run() -> Result<()> {
         let target: IDropTarget = DropTarget { helper, data: RefCell::new(None), described: RefCell::new(None) }.into();
         RegisterDragDrop(hwnd, &target)?;
         // The floating beaver lives on this thread too (it needs OLE and this message loop).
-        if let Err(e) = crate::beaver::create(hinst, hooks().beaver_pos) {
+        if let Err(e) = crate::beaver::create(hinst, hooks().beaver_pos, hooks().icon_size) {
             log::error!("couldn't create the floating beaver: {e:?}");
         }
 

@@ -165,16 +165,15 @@ pub fn run() {
             let s = settings::load(&handle);
 
             let enabled_item = CheckMenuItem::with_id(app, "enabled", "Enabled", true, s.enabled, None::<&str>)?;
-            let beaver_item = CheckMenuItem::with_id(app, "beaver", "Show beaver", true, s.show_beaver, None::<&str>)?;
+            let beaver_item = CheckMenuItem::with_id(app, "beaver", "Show icon", true, s.show_beaver, None::<&str>)?;
             let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit File Beaver", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit con/vert", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let menu = Menu::with_items(app, &[&enabled_item, &beaver_item, &settings_item, &sep, &quit_item])?;
 
             TrayIconBuilder::with_id("tray")
-                // Flat beaver: the glass app icon turns to mush at tray size.
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
-                .tooltip("File Beaver: drag a file and tap Shift")
+                .tooltip("con/vert: drag a file and tap Shift")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, e| match e.id().as_ref() {
@@ -216,6 +215,7 @@ pub fn run() {
             let beaver_handle = handle.clone();
             trigger::start(trigger::Hooks {
                 beaver_pos: s.beaver_pos,
+                icon_size: s.icon_size,
                 // Runs on the drag thread: quick settings updates only.
                 on_beaver: Box::new(move |e| match e {
                     beaver::BeaverEvent::Moved(x, y) => {
@@ -224,6 +224,14 @@ pub fn run() {
                         s.beaver_pos = Some((x, y));
                         if let Err(e) = settings::save(&beaver_handle, &s) {
                             log::warn!("could not save the beaver's position: {e}");
+                        }
+                    }
+                    beaver::BeaverEvent::Resized(px) => {
+                        let state = beaver_handle.state::<AppState>();
+                        let mut s = state.settings.lock().unwrap_or_else(|e| e.into_inner());
+                        s.icon_size = px;
+                        if let Err(e) = settings::save(&beaver_handle, &s) {
+                            log::warn!("could not save the icon size: {e}");
                         }
                     }
                     beaver::BeaverEvent::Hidden => set_beaver(&beaver_handle, false),
@@ -246,8 +254,9 @@ pub fn run() {
                     let _ = drop_handle.emit("drop", DropEvent { action, paths });
                 }),
             });
-            log::info!("File Beaver {} started", app.package_info().version);
-            updates::start_background_checks(handle.clone());
+            // No update checks: the update feed still belongs to File Beaver, whose releases
+            // would replace con/vert.
+            log::info!("con/vert {} started", app.package_info().version);
             if crashed_last_time {
                 log::warn!("previous session crashed (a crash report was written)");
                 let h = handle.clone();
@@ -257,7 +266,7 @@ pub fn run() {
                     jobs::card_message(
                         &h,
                         primary_corner(&h),
-                        "File Beaver closed unexpectedly".into(),
+                        "con/vert closed unexpectedly".into(),
                         "A crash report was saved on this PC. Nothing was sent.".into(),
                         crash::latest_report().into_iter().collect(),
                         None,
@@ -277,7 +286,7 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building File Beaver")
+        .expect("error while building con/vert")
         .run(|_app, event| {
             if let tauri::RunEvent::Exit = event {
                 crash::clean_exit();

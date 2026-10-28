@@ -24,8 +24,6 @@ export default function App() {
   const [s, setS] = useState<Settings | null>(null);
   const [status, setStatus] = useState("");
   const [version, setVersion] = useState("");
-  const [updateMsg, setUpdateMsg] = useState("");
-  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.add("settings-root");
@@ -64,8 +62,8 @@ export default function App() {
   return (
     <main className="settings">
       <header className="brand">
-        <img src="/beaver.svg" alt="" width="40" height="40" />
-        <h1>File Beaver</h1>
+        <img src="/icon.svg" alt="" width="40" height="40" />
+        <h1>con/vert</h1>
       </header>
       <p className="hint">
         Drag any file and tap <kbd>{keyName}</kbd> to open the ring. Tap again to switch between Convert and Tools.
@@ -100,7 +98,7 @@ export default function App() {
           <span>Folder</span>
           <input
             type="text"
-            placeholder="C:\Users\you\Pictures\File Beaver"
+            placeholder="C:\Users\you\Music\con-vert"
             value={s.output_folder}
             onChange={(e) => setS({ ...s, output_folder: e.target.value })}
             onBlur={(e) => update({ output_folder: e.target.value })}
@@ -109,7 +107,7 @@ export default function App() {
       )}
 
       <label className="row">
-        <span>Show the beaver on screen (drop files on it)</span>
+        <span>Show the icon on screen (drop files on it)</span>
         <input type="checkbox" checked={s.show_beaver} onChange={(e) => update({ show_beaver: e.target.checked })} />
       </label>
 
@@ -127,26 +125,9 @@ export default function App() {
       <section className="about">
         <h2>About</h2>
         <div className="row">
-          <span>File Beaver {version}</span>
-          <button
-            className="check"
-            disabled={checking}
-            onClick={async () => {
-              setChecking(true);
-              setUpdateMsg("");
-              try {
-                setUpdateMsg(await invoke<string>("check_for_updates"));
-              } catch (e) {
-                setUpdateMsg(`Couldn't check: ${e}`);
-              } finally {
-                setChecking(false);
-              }
-            }}
-          >
-            {checking ? "Checking…" : "Check for updates"}
-          </button>
+          <span>con/vert {version}</span>
+          <span className="hint">Based on File Beaver (MIT)</span>
         </div>
-        {updateMsg && <p className="hint">{updateMsg}</p>}
       </section>
     </main>
   );

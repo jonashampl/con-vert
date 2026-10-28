@@ -32,7 +32,7 @@ pub fn strip(path: &Path) -> Result<Option<Stripped>> {
     if let Some(why) = crate::formats::not_really(path) {
         bail!(why);
     }
-    let format = crate::formats::detect(path).ok_or_else(|| anyhow::anyhow!("this isn't a file type File Beaver can clean"))?;
+    let format = crate::formats::detect(path).ok_or_else(|| anyhow::anyhow!("this isn't a file type con/vert can clean"))?;
     if format == Format::Jpg && !crate::decode::jpeg_is_complete(&data) {
         bail!("this JPEG is incomplete (the file was cut off)");
     }
@@ -227,7 +227,7 @@ pub fn strip_webp(data: &[u8]) -> Result<(Vec<u8>, Vec<String>)> {
 }
 
 pub fn strip_pdf(data: &[u8]) -> Result<(Vec<u8>, Vec<String>)> {
-    let mut doc = Document::load_mem(data).map_err(|_| anyhow::anyhow!("this PDF is damaged or uses a structure File Beaver can't read"))?;
+    let mut doc = Document::load_mem(data).map_err(|_| anyhow::anyhow!("this PDF is damaged or uses a structure con/vert can't read"))?;
     if doc.is_encrypted() {
         bail!("password-protected PDFs aren't supported");
     }

@@ -2,6 +2,9 @@
 //! newer version exists, a card offers "Install & restart". Updates are signed with the
 //! project's private key; the app only accepts ones matching the public key in
 //! tauri.conf.json, so a tampered download is refused.
+//!
+//! con/vert doesn't start the background checks yet: it has no update feed of its own.
+#![allow(dead_code)]
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -46,8 +49,8 @@ pub async fn check(app: &AppHandle, from_settings: bool) -> Result<String, Strin
             jobs::card_message(
                 app,
                 anchor,
-                format!("File Beaver {version} is available"),
-                "Install now; File Beaver restarts in a few seconds.".into(),
+                format!("con/vert {version} is available"),
+                "Install now; con/vert restarts in a few seconds.".into(),
                 vec![],
                 Some(CardAction { label: "Install & restart".into(), command: "install_update".into() }),
             );

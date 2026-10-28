@@ -1,4 +1,4 @@
-//! User settings, stored as JSON in %APPDATA%\app.filebeaver.desktop\settings.json.
+//! User settings, stored as JSON in %APPDATA%\app.convert.desktop\settings.json.
 
 use std::path::PathBuf;
 
@@ -34,10 +34,12 @@ pub struct Settings {
     pub output: OutputLocation,
     pub output_folder: String,
     pub launch_at_startup: bool,
-    /// The floating beaver you can drop files onto.
+    /// The floating icon you can drop files onto.
     pub show_beaver: bool,
-    /// Where the beaver was left (physical px, top-left); None = bottom-right corner.
+    /// Where the icon was left (physical px, top-left); None = bottom-right corner.
     pub beaver_pos: Option<(i32, i32)>,
+    /// Icon edge in logical px: 32, 48 or 96, like Windows desktop icons.
+    pub icon_size: i32,
 }
 
 impl Default for Settings {
@@ -50,6 +52,7 @@ impl Default for Settings {
             launch_at_startup: true,
             show_beaver: true,
             beaver_pos: None,
+            icon_size: 48,
         }
     }
 }

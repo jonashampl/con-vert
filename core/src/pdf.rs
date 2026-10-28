@@ -36,7 +36,7 @@ pub fn open(path: &Path) -> Result<PdfDoc> {
     loaded.map(PdfDoc).map_err(|e| {
         // ERROR_WRONG_PASSWORD and friends
         if matches!(e.code().0 as u32, 0x8007_052B | 0x8007_0056) {
-            anyhow!("this PDF is password-protected, and File Beaver can't open protected PDFs")
+            anyhow!("this PDF is password-protected, and con/vert can't open protected PDFs")
         } else {
             anyhow!("this PDF is damaged or can't be opened")
         }

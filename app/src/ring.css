@@ -1,6 +1,6 @@
-/* The radial menu, File Beaver style: frosted-glass petals, a pond-green hub with a lime
-   edge, and lime for the petal under the cursor. Geometry lives in Ring.tsx and must match
-   the hit-testing in trigger.rs / core geometry.rs. */
+/* The radial menu, con/vert style: dark iOS glass petals over the blurred screen, a graphite
+   hub with a blue edge, and iOS blue for the petal under the cursor. Geometry lives in Ring.tsx
+   and must match the hit-testing in trigger.rs / core geometry.rs. */
 
 html.ring-root,
 html.ring-root body,
@@ -13,9 +13,9 @@ html.ring-root #root {
 }
 
 .ring {
-  --pond: #0e3b24;
-  --frost: #f1f6ee;
-  --lime: #a6e43a;
+  --ink: #f5f5f7;
+  --petal: #55555c;
+  --blue: #0a84ff;
   display: block;
   width: 100vw;
   height: 100vh;
@@ -23,7 +23,7 @@ html.ring-root #root {
   cursor: default;
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   transform-origin: 50% 50%;
-  filter: drop-shadow(0 8px 18px rgba(8, 40, 20, 0.35));
+  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.4));
   animation: ring-in 150ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
 }
 
@@ -46,19 +46,19 @@ html.ring-root #root {
   }
 }
 
-/* Frosted glass: the captured screen patch behind the ring, blurred and cooled. */
+/* Glass: the captured screen patch behind the ring, blurred, saturated and dimmed. */
 .backdrop {
-  filter: blur(10px) saturate(1.3) brightness(1.08);
+  filter: blur(12px) saturate(1.5) brightness(0.9);
 }
 
 .tint {
-  fill: rgba(241, 246, 238, 0.42);
+  fill: rgba(38, 38, 42, 0.42);
 }
 
 .rim {
   fill: none;
-  stroke: rgba(166, 228, 58, 0.85);
-  stroke-width: 1.5;
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1;
 }
 
 .petals {
@@ -79,7 +79,7 @@ html.ring-root #root {
 }
 
 .petal {
-  opacity: 0.88;
+  opacity: 0.62;
   transform-box: view-box;
   transform-origin: 192px 192px;
   transition:
@@ -90,18 +90,18 @@ html.ring-root #root {
 /* The petal shape only (not icon paths): opaque fill + same-colour round stroke; opacity
    lives on the group so they do not double up. */
 .petal > path {
-  fill: var(--frost);
-  stroke: var(--frost);
+  fill: var(--petal);
+  stroke: var(--petal);
   stroke-width: 24;
   stroke-linejoin: round;
 }
 
 .petals.loading .petal {
-  opacity: 0.5;
+  opacity: 0.35;
 }
 
 .petal.off {
-  opacity: 0.32;
+  opacity: 0.24;
 }
 
 .petal.hot {
@@ -125,7 +125,7 @@ html.ring-root #root {
 }
 
 .label {
-  fill: var(--pond);
+  fill: var(--ink);
   font-weight: 650;
 }
 
@@ -140,23 +140,23 @@ html.ring-root #root {
 }
 
 .icon {
-  color: var(--pond);
+  color: var(--ink);
 }
 
-/* Pond-green ink on lime: white on lime fails contrast. Icons are line drawings, so they
-   only take `color` (a fill would turn them into solid blobs). */
+/* White on the blue gradient: both stops keep white at 4.5:1 or better.
+   Icons are line drawings, so they only take `color`. */
 .petal.hot .label {
-  fill: var(--pond);
+  fill: #fff;
 }
 
 .petal.hot .icon {
-  color: var(--pond);
+  color: #fff;
 }
 
-/* Near-opaque so warm wallpapers don't turn it muddy. */
+/* Near-opaque so bright wallpapers don't wash it out. */
 .hub {
-  fill: rgba(14, 59, 36, 0.94);
-  stroke: rgba(166, 228, 58, 0.9);
+  fill: rgba(22, 22, 26, 0.88);
+  stroke: var(--blue);
   stroke-width: 2;
 }
 
@@ -179,23 +179,24 @@ html.ring-root #root {
   text-overflow: ellipsis;
   padding: 5px 13px;
   border-radius: 999px;
-  background: rgba(241, 246, 238, 0.96);
-  color: var(--pond);
+  background: rgba(242, 242, 247, 0.92);
+  color: #1c1c1e;
   font-size: 11.5px;
   font-weight: 600;
-  box-shadow: 0 2px 6px rgba(8, 40, 20, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
-/* While hovering a petal, the pill names the action in lime. */
+/* While hovering a petal, the pill names the action in blue. */
 .pill.action {
-  background: var(--lime);
+  background: #0068e0;
+  color: #fff;
   font-weight: 700;
 }
 
-/* The floating beaver, drawn where it sits under the ring: let go on him to pick by click. */
+/* The floating icon, drawn where it sits under the ring: let go on it to pick by click. */
 .beaver-spot circle {
-  fill: rgba(14, 59, 36, 0.94);
-  stroke: #a6e43a;
+  fill: rgba(22, 22, 26, 0.88);
+  stroke: var(--blue);
   stroke-width: 2.5;
   transform-box: fill-box;
   transform-origin: center;

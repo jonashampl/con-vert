@@ -162,8 +162,8 @@ export default function Ring() {
           <circle cx={C} cy={C} r={HUB - 1} />
         </clipPath>
         <linearGradient id="hot" gradientUnits="userSpaceOnUse" x1="0" y1={C - R} x2="0" y2={C + R}>
-          <stop offset="0" stopColor="#c8f272" />
-          <stop offset="1" stopColor="#8fd42a" />
+          <stop offset="0" stopColor="#1a6fef" />
+          <stop offset="1" stopColor="#0058d6" />
         </linearGradient>
       </defs>
 
@@ -221,7 +221,7 @@ export default function Ring() {
         <g className="beaver-spot">
           <circle cx={marker[0]} cy={marker[1]} r={marker[2] * 0.82} />
           <image
-            href="/beaver.svg"
+            href="/icon.svg"
             x={marker[0] - marker[2] * 0.62}
             y={marker[1] - marker[2] * 0.62}
             width={marker[2] * 1.24}

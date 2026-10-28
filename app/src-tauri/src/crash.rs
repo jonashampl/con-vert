@@ -51,7 +51,7 @@ pub fn install() -> bool {
     std::panic::set_hook(Box::new(move |info| {
         let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
         let report = format!(
-            "File Beaver {} crash report (Rust panic)\nthread: {thread}\nos: {}\n\n{info}\n\nbacktrace:\n{}\n",
+            "con/vert {} crash report (Rust panic)\nthread: {thread}\nos: {}\n\n{info}\n\nbacktrace:\n{}\n",
             env!("CARGO_PKG_VERSION"),
             std::env::consts::OS,
             std::backtrace::Backtrace::force_capture()

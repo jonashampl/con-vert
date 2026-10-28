@@ -1,7 +1,8 @@
-//! The floating beaver: a small always-on-top widget you can drag around and drop files
-//! onto. Dropping on it opens the ring centred on the beaver, no Shift needed. It's a
-//! per-pixel-alpha window, so only the beaver's own pixels take clicks and drops; around
-//! it, everything passes through to the windows underneath.
+//! The floating icon: a small widget you can drag around and drop files onto. Dropping
+//! on it opens the ring centred on the icon, no Shift needed. It's a per-pixel-alpha
+//! window, so only the icon's own pixels take clicks and drops; around it, everything
+//! passes through to the windows underneath. The icon is liquid glass, redrawn from the
+//! screen behind it whenever that changes (core::icon draws it).
 //!
 //! It sits on the desktop like a gadget, behind every other window, and rises on top only
 //! while a file is being dragged (the trigger thread calls [`raise`]), so it never covers
@@ -11,11 +12,10 @@
 //! to it with [`set_visible`]; it reports back through `Hooks::on_beaver`.
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering::SeqCst};
-use std::sync::OnceLock;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicU32, AtomicU64, Ordering::SeqCst};
 
-use image::imageops::FilterType;
-use image::RgbaImage;
+use image::{Rgba, RgbaImage};
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -25,10 +25,14 @@ use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-/// Widget edge in logical px, and its gap from the screen corner by default.
-const SIZE_LOGICAL: f64 = 76.0;
+/// Gap from the screen corner by default, in logical px.
 const MARGIN_LOGICAL: f64 = 28.0;
-/// The beaver is drawn a little smaller at rest and full size while a file hovers over it.
+/// Sizes offered in the right-click menu: Windows' small, medium and large desktop icons.
+const SIZES: [(usize, PCWSTR, i32); 3] = [(10, w!("Small"), 32), (11, w!("Medium"), 48), (12, w!("Large"), 96)];
+/// How often the glass checks whether the screen behind it changed (a window moved away).
+const REFRESH_MS: u32 = 1500;
+const TIMER_REFRESH: usize = 1;
+/// The icon is drawn a little smaller at rest and full size while a file hovers over it.
 const REST: f32 = 0.88;
 const PERKED: f32 = 1.0;
 
@@ -41,6 +45,8 @@ const ID_HIDE: usize = 2;
 pub enum BeaverEvent {
     /// Dragged to a new place (top-left, physical px).
     Moved(i32, i32),
+    /// A new size picked from its right-click menu (logical px).
+    Resized(i32),
     /// Hidden from its right-click menu.
     Hidden,
     OpenSettings,
@@ -49,8 +55,12 @@ pub enum BeaverEvent {
 static HWND_RAW: AtomicIsize = AtomicIsize::new(0);
 static WANT_VISIBLE: AtomicBool = AtomicBool::new(true);
 static RAISED: AtomicBool = AtomicBool::new(false);
-static SIZE_PX: AtomicI32 = AtomicI32::new(76);
-static IMAGE: OnceLock<RgbaImage> = OnceLock::new();
+static SIZE_PX: AtomicI32 = AtomicI32::new(48);
+/// Chosen edge in logical px.
+static LOGICAL: AtomicI32 = AtomicI32::new(48);
+/// Scale last drawn at (f32 bits), and a hash of what was drawn, to skip identical redraws.
+static SCALE: AtomicU32 = AtomicU32::new(0);
+static DRAWN: AtomicU64 = AtomicU64::new(0);
 
 fn hwnd() -> HWND {
     HWND(HWND_RAW.load(SeqCst) as *mut _)
@@ -103,31 +113,36 @@ pub(crate) fn visible_rect() -> Option<(i32, i32, i32, i32)> {
     Some((r.left, r.top, r.right, r.bottom))
 }
 
-fn image() -> &'static RgbaImage {
-    IMAGE.get_or_init(|| {
-        image::load_from_memory_with_format(include_bytes!("../icons/beaver-widget.png"), image::ImageFormat::Png)
-            .expect("bundled beaver image")
-            .to_rgba8()
-    })
-}
-
 /// Widget size in physical px for the monitor containing `pt`.
 fn size_at(pt: POINT) -> i32 {
     unsafe {
         let mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
         let (mut dx, mut dy) = (96u32, 96u32);
         let _ = GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
-        (SIZE_LOGICAL * dx as f64 / 96.0).round() as i32
+        (LOGICAL.load(SeqCst) as f64 * dx as f64 / 96.0).round() as i32
     }
 }
 
-/// Draws the beaver at `scale` of the window into the layered window.
+/// Draws the icon at `scale` of the window into the layered window, as glass over the
+/// screen behind it. Skips the redraw when nothing changed.
 unsafe fn paint(scale: f32) {
     unsafe {
         let size = SIZE_PX.load(SeqCst);
         let inner = ((size as f32 * scale).round() as u32).max(1);
-        let small = image::imageops::resize(image(), inner, inner, FilterType::Lanczos3);
         let off = (size as u32 - inner) / 2;
+        let mut r = RECT::default();
+        let _ = GetWindowRect(hwnd(), &mut r);
+        let (n, x, y) = (inner as i32, r.left + off as i32, r.top + off as i32);
+        let behind = crate::capture::screen_rgba(x, y, n, n, n, n)
+            .and_then(|px| RgbaImage::from_raw(inner, inner, px))
+            .unwrap_or_else(|| RgbaImage::from_pixel(inner, inner, Rgba([40, 40, 44, 255])));
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (behind.as_raw(), size, scale.to_bits()).hash(&mut h);
+        SCALE.store(scale.to_bits(), SeqCst);
+        if DRAWN.swap(h.finish(), SeqCst) == h.finish() {
+            return;
+        }
+        let small = shiftdrop_core::icon::glass(&behind);
         // Premultiplied BGRA, top-down, as UpdateLayeredWindow expects.
         let mut px = vec![0u8; (size * size * 4) as usize];
         for (x, y, p) in small.enumerate_pixels() {
@@ -162,16 +177,32 @@ unsafe fn paint(scale: f32) {
     }
 }
 
-/// Re-fits the widget to the DPI of the monitor it's now on.
+/// Redraws at the current scale (the screen behind may have changed).
+unsafe fn repaint() {
+    // Nothing drawn yet: WM_MOVE also arrives while the window is being created.
+    let scale = f32::from_bits(SCALE.load(SeqCst));
+    if scale > 0.0 && HWND_RAW.load(SeqCst) != 0 {
+        unsafe { paint(scale) }
+    }
+}
+
+/// Re-fits the widget to the DPI of the monitor it's now on and the chosen size, keeping
+/// its centre and keeping it on that monitor's work area.
 unsafe fn refit() {
     unsafe {
         let mut r = RECT::default();
         let _ = GetWindowRect(hwnd(), &mut r);
-        let size = size_at(POINT { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 });
+        let centre = POINT { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 };
+        let size = size_at(centre);
         if size != SIZE_PX.swap(size, SeqCst) {
-            let _ = SetWindowPos(hwnd(), None, 0, 0, size, size, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-            paint(REST);
+            let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            let _ = GetMonitorInfoW(MonitorFromPoint(centre, MONITOR_DEFAULTTONEAREST), &mut mi);
+            let w = mi.rcWork;
+            let x = (centre.x - size / 2).clamp(w.left, (w.right - size).max(w.left));
+            let y = (centre.y - size / 2).clamp(w.top, (w.bottom - size).max(w.top));
+            let _ = SetWindowPos(hwnd(), None, x, y, size, size, SWP_NOZORDER | SWP_NOACTIVATE);
         }
+        paint(REST);
     }
 }
 
@@ -179,7 +210,17 @@ unsafe fn context_menu(x: i32, y: i32) {
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
         let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("Settings…"));
-        let _ = AppendMenuW(menu, MF_STRING, ID_HIDE, w!("Hide beaver"));
+        if let Ok(sizes) = CreatePopupMenu() {
+            for (id, label, _) in SIZES {
+                let _ = AppendMenuW(sizes, MF_STRING, id, label);
+            }
+            if let Some((id, _, _)) = SIZES.iter().find(|s| s.2 == LOGICAL.load(SeqCst)) {
+                let _ = CheckMenuRadioItem(sizes, SIZES[0].0 as u32, SIZES[2].0 as u32, *id as u32, MF_BYCOMMAND.0);
+            }
+            let _ = AppendMenuW(menu, MF_POPUP, sizes.0 as usize, w!("Size"));
+        }
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let _ = AppendMenuW(menu, MF_STRING, ID_HIDE, w!("Hide icon"));
         // Required so the menu closes when you click elsewhere.
         let _ = SetForegroundWindow(hwnd());
         let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, 0, hwnd(), None).0 as usize;
@@ -190,7 +231,16 @@ unsafe fn context_menu(x: i32, y: i32) {
                 set_visible(false);
                 emit(BeaverEvent::Hidden);
             }
-            _ => {}
+            id => {
+                if let Some(&(_, _, px)) = SIZES.iter().find(|s| s.0 == id) {
+                    LOGICAL.store(px, SeqCst);
+                    refit();
+                    let mut r = RECT::default();
+                    let _ = GetWindowRect(hwnd(), &mut r);
+                    emit(BeaverEvent::Moved(r.left, r.top));
+                    emit(BeaverEvent::Resized(px));
+                }
+            }
         }
     }
 }
@@ -202,8 +252,19 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
 unsafe fn wndproc_body(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         match msg {
-            // Grab anywhere on the beaver to move it.
+            // Grab anywhere on the icon to move it.
             WM_NCHITTEST => LRESULT(HTCAPTION as isize),
+            // The glass follows the screen behind it, live while dragging.
+            WM_MOVE => {
+                repaint();
+                LRESULT(0)
+            }
+            WM_TIMER if wp.0 == TIMER_REFRESH => {
+                if IsWindowVisible(h).as_bool() {
+                    repaint();
+                }
+                LRESULT(0)
+            }
             WM_EXITSIZEMOVE => {
                 refit();
                 let mut r = RECT::default();
@@ -291,8 +352,9 @@ impl IDropTarget_Impl for BeaverDrop_Impl {
     }
 }
 
-/// Creates the beaver on the calling (trigger) thread. `start` is where it was last left.
-pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>) -> Result<()> {
+/// Creates the icon on the calling (trigger) thread. `start` is where it was last left,
+/// `logical` its size in logical px.
+pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>, logical: i32) -> Result<()> {
     unsafe {
         let class = w!("FileBeaverWidget");
         let wc = WNDCLASSW {
@@ -304,6 +366,7 @@ pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>) -> Result
             ..Default::default()
         };
         RegisterClassW(&wc);
+        LOGICAL.store(if SIZES.iter().any(|s| s.2 == logical) { logical } else { 48 }, SeqCst);
 
         // Last position, if it's still on a connected monitor; else the main screen's
         // bottom-right corner.
@@ -314,7 +377,7 @@ pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>) -> Result
                 let mut work = RECT::default();
                 let _ = SystemParametersInfoW(SPI_GETWORKAREA, 0, Some(&mut work as *mut _ as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
                 let size = size_at(POINT { x: work.right - 1, y: work.bottom - 1 });
-                let margin = (MARGIN_LOGICAL * size as f64 / SIZE_LOGICAL) as i32;
+                let margin = (MARGIN_LOGICAL * size as f64 / LOGICAL.load(SeqCst) as f64) as i32;
                 (work.right - size - margin, work.bottom - size - margin, size)
             }
         };
@@ -322,7 +385,7 @@ pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>) -> Result
         let h = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             class,
-            w!("File Beaver"),
+            w!("con/vert"),
             WS_POPUP,
             x,
             y,
@@ -334,14 +397,19 @@ pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>) -> Result
             None,
         )?;
         HWND_RAW.store(h.0 as isize, SeqCst);
+        // Screen captures would include the icon itself, so its glass would feed on its
+        // own pixels; leaving it out of captures (Windows 10 2004+) breaks that loop. It
+        // also keeps the icon out of screenshots and recordings.
+        let _ = SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE);
         sink(h);
         paint(REST);
+        SetTimer(h, TIMER_REFRESH, REFRESH_MS, None);
         let target: IDropTarget = BeaverDrop { perked: Cell::new(false) }.into();
         RegisterDragDrop(h, &target)?;
         if WANT_VISIBLE.load(SeqCst) {
             let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
         }
-        log::info!("beaver ready at ({x}, {y}), {size}px");
+        log::info!("icon ready at ({x}, {y}), {size}px");
         Ok(())
     }
 }

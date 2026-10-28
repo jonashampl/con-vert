@@ -1,4 +1,4 @@
-/* Editor window in File Beaver's frost / pond / lime, with a pond-green dark mode. */
+/* Editor window: always dark, iOS system colours with the blue accent. */
 
 html.editor-root,
 html.editor-root body,
@@ -9,16 +9,17 @@ html.editor-root #root {
 }
 
 .editor {
-  --bg: #f4f8f1;
-  --panel: #ffffff;
-  --stage: #e3ebdf;
-  --ink: #13261b;
-  --muted: #557062;
-  --line: #dbe6d6;
-  --accent: #a6e43a;
-  --accent-ink: #0e3b24;
-  /* Lime text on white is unreadable; links use moss instead. */
-  --link: #2f6b3f;
+  --bg: #1c1c1e;
+  --panel: #2c2c2e;
+  --stage: #111113;
+  --ink: #f2f2f7;
+  --muted: rgba(235, 235, 245, 0.6);
+  --line: #38383a;
+  /* Deeper than system blue so white text on it stays at 4.5:1. */
+  --accent: #0068e0;
+  --accent-ink: #fff;
+  --link: #409cff;
+  color-scheme: dark;
   display: grid;
   grid-template-rows: auto 1fr auto;
   height: 100vh;
@@ -27,18 +28,6 @@ html.editor-root #root {
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
   user-select: none;
-}
-
-@media (prefers-color-scheme: dark) {
-  .editor {
-    --bg: #0f1e15;
-    --panel: #142a1d;
-    --stage: #0a140e;
-    --ink: #e8f2e3;
-    --muted: #9cb5a5;
-    --line: #23402e;
-    --link: #a6e43a;
-  }
 }
 
 /* Fixed bar heights keep the canvas position predictable (the e2e test relies on it). */
@@ -85,9 +74,9 @@ html.editor-root #root {
 
 .stage-content {
   position: relative;
-  box-shadow: 0 4px 18px rgba(8, 40, 20, 0.18);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
   background:
-    repeating-conic-gradient(#d5dfd0 0% 25%, #eef3ea 0% 50%) 0 0 / 16px 16px;
+    repeating-conic-gradient(#2a2a2e 0% 25%, #3a3a3e 0% 50%) 0 0 / 16px 16px;
 }
 
 .stage-content canvas {
@@ -258,7 +247,7 @@ html.editor-root #root {
 
 .swatch {
   aspect-ratio: 1;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
   cursor: pointer;
   padding: 0;
@@ -285,7 +274,7 @@ html.editor-root #root {
 .dot {
   width: 24px;
   height: 24px;
-  border: 1px solid rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
@@ -317,7 +306,7 @@ html.editor-root #root {
 
 .shade {
   position: absolute;
-  box-shadow: 0 0 0 9999px rgba(5, 25, 14, 0.55);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.58);
 }
 
 .crop-box {
@@ -415,7 +404,7 @@ html.editor-root #root {
 
 .error {
   flex: 1;
-  color: #c8372d;
+  color: #ff6961;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -58,22 +58,29 @@ unsafe fn bitmap_rgba(hbm: HBITMAP, w: i32, h: i32, keep_alpha: bool) -> Option<
     }
 }
 
-/// Captures the screen square at (x, y) of `size` physical pixels, downscaled.
-pub fn backdrop(x: i32, y: i32, size: i32) -> Option<String> {
+/// The screen rect at (x, y) of `w`x`h` physical pixels, scaled to `out_w`x`out_h`, as RGBA.
+/// Windows excluded from capture (the floating icon) are left out of it.
+pub fn screen_rgba(x: i32, y: i32, w: i32, h: i32, out_w: i32, out_h: i32) -> Option<Vec<u8>> {
     unsafe {
         let screen = GetDC(None);
         let mem = CreateCompatibleDC(screen);
-        let bmp = CreateCompatibleBitmap(screen, BACKDROP_PX, BACKDROP_PX);
+        let bmp = CreateCompatibleBitmap(screen, out_w, out_h);
         let old = SelectObject(mem, bmp);
         SetStretchBltMode(mem, HALFTONE);
-        let ok = StretchBlt(mem, 0, 0, BACKDROP_PX, BACKDROP_PX, screen, x, y, size, size, SRCCOPY).as_bool();
+        let ok = StretchBlt(mem, 0, 0, out_w, out_h, screen, x, y, w, h, SRCCOPY).as_bool();
         SelectObject(mem, old);
         let _ = DeleteDC(mem);
         ReleaseDC(None, screen);
-        let rgba = if ok { bitmap_rgba(bmp, BACKDROP_PX, BACKDROP_PX, false) } else { None };
+        let rgba = if ok { bitmap_rgba(bmp, out_w, out_h, false) } else { None };
         let _ = DeleteObject(bmp);
-        encode_png(BACKDROP_PX as u32, BACKDROP_PX as u32, &rgba?)
+        rgba
     }
+}
+
+/// Captures the screen rect at (x, y) of `w`x`h` physical pixels, downscaled; the UI
+/// stretches it back over the same area and blurs it.
+pub fn backdrop(x: i32, y: i32, w: i32, h: i32) -> Option<String> {
+    encode_png(BACKDROP_PX as u32, BACKDROP_PX as u32, &screen_rgba(x, y, w, h, BACKDROP_PX, BACKDROP_PX)?)
 }
 
 /// Explorer's thumbnail (or icon) for `path`. Call from a worker thread.

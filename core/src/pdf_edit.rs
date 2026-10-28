@@ -150,7 +150,7 @@ impl PageGeom {
 }
 
 fn load(data: &[u8]) -> Result<Document> {
-    let doc = Document::load_mem(data).map_err(|_| anyhow::anyhow!("this PDF is damaged or uses a structure File Beaver can't read"))?;
+    let doc = Document::load_mem(data).map_err(|_| anyhow::anyhow!("this PDF is damaged or uses a structure con/vert can't read"))?;
     if doc.is_encrypted() {
         bail!("password-protected PDFs aren't supported");
     }

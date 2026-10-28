@@ -79,7 +79,7 @@ pub fn load(path: &Path) -> Result<Decoded> {
         Ok(image) => Ok(Decoded { image, icc: None }),
         Err(e) => match (real, first_error) {
             // Nothing recognised the content at all.
-            (None, _) => bail!("this isn't a picture File Beaver can read"),
+            (None, _) => bail!("this isn't a picture con/vert can read"),
             // A known format that our decoder rejected: it's damaged.
             (Some(_), Some(_)) => bail!("this {what} file is damaged and can't be opened"),
             // HEIC/AVIF without the codec: Windows' message says which one.

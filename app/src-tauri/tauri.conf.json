@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "File Beaver",
+  "productName": "con-vert",
   "version": "0.1.1",
-  "identifier": "app.filebeaver.desktop",
+  "identifier": "app.convert.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,8 @@
     "windows": [
       {
         "label": "main",
-        "title": "File Beaver Settings",
+        "title": "con/vert settings",
+        "theme": "Dark",
         "width": 460,
         "height": 560,
         "resizable": false,
@@ -34,7 +35,7 @@
         "shadow": false,
         "resizable": false,
         "dragDropEnabled": false,
-        "title": "File Beaver menu"
+        "title": "con/vert menu"
       },
       {
         "label": "toast",
@@ -50,12 +51,13 @@
         "shadow": false,
         "resizable": false,
         "dragDropEnabled": false,
-        "title": "File Beaver progress"
+        "title": "con/vert progress"
       },
       {
         "label": "editor",
         "url": "index.html#editor",
-        "title": "File Beaver",
+        "title": "con/vert",
+        "theme": "Dark",
         "width": 1040,
         "height": 740,
         "minWidth": 760,
@@ -74,11 +76,11 @@
     "targets": [
       "nsis"
     ],
-    "publisher": "File Beaver",
-    "copyright": "© 2026 File Beaver",
+    "publisher": "con/vert",
+    "copyright": "© 2026 con/vert, based on File Beaver © 2026 DEVIOUSDEV101",
     "category": "Utility",
     "shortDescription": "Drag a file, tap Shift, convert or edit it.",
-    "longDescription": "File Beaver adds a radial menu to file drags on Windows: tap Shift while dragging to convert, compress, strip metadata, crop, annotate, redact and more. Works offline.",
+    "longDescription": "con/vert adds a radial menu to file drags on Windows: tap Shift while dragging to convert, compress, strip metadata, crop, annotate, redact and more. Works offline.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -111,18 +113,16 @@
         ]
       }
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": false
   },
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY0OUE1OURERUE5MTI5MTkKUldRWktaSHEzVm1hOUFTTFNiaUpUTXFJMnVWMFc1YkpOdDBydzd4ZWFnOWR3WnFZQzFvSjNab04K",
-      "endpoints": [
-        "https://github.com/DEVIOUSDEV101/file-beaver/releases/latest/download/latest.json"
-      ],
+      "endpoints": [],
       "windows": {
         "installMode": "passive"
       }
     }
   },
-  "mainBinaryName": "File Beaver"
+  "mainBinaryName": "con-vert"
 }

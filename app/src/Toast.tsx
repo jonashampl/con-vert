@@ -37,6 +37,8 @@ const AUTO_HIDE_MS = 3500;
 
 export default function Toast() {
   const [card, setCard] = useState<Card | null>(null);
+  // The screen behind the window, blurred into the card's glass.
+  const [backdrop, setBackdrop] = useState<string | null>(null);
   const hovered = useRef(false);
   const hideTimer = useRef<number | undefined>(undefined);
 
@@ -88,8 +90,10 @@ export default function Toast() {
           break;
       }
     });
+    const unBackdrop = listen<string | null>("backdrop", (e) => setBackdrop(e.payload));
     return () => {
       un.then((f) => f());
+      unBackdrop.then((f) => f());
     };
   }, []);
 
@@ -109,6 +113,7 @@ export default function Toast() {
       onMouseEnter={() => (hovered.current = true)}
       onMouseLeave={() => (hovered.current = false)}
     >
+      {backdrop && <img className="glass" src={backdrop} alt="" />}
       <div className="head">
         <span className="badge">
           <Icon size={15} strokeWidth={2.4} className={card.state === "running" ? "spin" : undefined} />

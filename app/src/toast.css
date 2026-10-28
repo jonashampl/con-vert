@@ -1,4 +1,4 @@
-/* Progress card shown beside the drop point, in File Beaver's frost / pond / lime.
+/* Progress card shown beside the drop point: dark iOS glass over the screen behind it.
    Scoped to html.toast-root because all windows share one CSS bundle. */
 
 html.toast-root,
@@ -12,17 +12,21 @@ html.toast-root #root {
 }
 
 html.toast-root .card {
-  --ink: #13261b;
-  --muted: #557062;
-  --pond: #0e3b24;
-  --accent: #a6e43a;
+  --ink: #f2f2f7;
+  --muted: rgba(235, 235, 245, 0.62);
+  --blue: #0a84ff;
+  /* Deeper blue behind white text, for 4.5:1. */
+  --blue-fill: #0068e0;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   box-sizing: border-box;
   margin: 8px;
   padding: 12px 14px 13px;
   border-radius: 14px;
-  background: rgba(241, 246, 238, 0.97);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 8px 22px rgba(8, 40, 20, 0.28);
+  background: rgba(30, 30, 34, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
   color: var(--ink);
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
@@ -41,6 +45,19 @@ html.toast-root .card {
   }
 }
 
+/* The captured screen patch, stretched back over the whole window (the card sits 8px in,
+   plus its 1px border) and blurred under the tint. */
+html.toast-root .glass {
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  filter: blur(14px) saturate(1.6) brightness(0.85);
+  transform: scale(1.06);
+}
+
 html.toast-root .head {
   display: flex;
   align-items: center;
@@ -53,24 +70,24 @@ html.toast-root .badge {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  color: var(--pond);
-  background: var(--accent);
+  color: #fff;
+  background: var(--blue-fill);
   flex: none;
 }
 
 html.toast-root .done .badge {
-  background: #2f6b3f;
-  color: #f1f6ee;
+  background: #30d158;
+  color: #05290f;
 }
 
 html.toast-root .error .badge {
-  background: #c8372d;
+  background: #d70015;
   color: #fff;
 }
 
 html.toast-root .info .badge {
-  background: #557062;
-  color: #f1f6ee;
+  background: rgba(235, 235, 245, 0.2);
+  color: var(--ink);
 }
 
 html.toast-root .spin {
@@ -105,7 +122,7 @@ html.toast-root .close {
 }
 
 html.toast-root .close:hover {
-  background: rgba(19, 38, 27, 0.1);
+  background: rgba(255, 255, 255, 0.12);
   color: var(--ink);
 }
 
@@ -133,20 +150,20 @@ html.toast-root .bar {
   height: 5px;
   margin: 10px 0 0 30px;
   border-radius: 3px;
-  background: rgba(19, 38, 27, 0.12);
+  background: rgba(255, 255, 255, 0.14);
   overflow: hidden;
 }
 
 html.toast-root .bar > div {
   height: 100%;
   border-radius: 3px;
-  background: var(--accent);
+  background: var(--blue);
   transition: width 120ms ease-out;
 }
 
 html.toast-root .errors {
   margin: 6px 0 0 30px;
-  color: #b03026;
+  color: #ff6961;
   font-size: 12px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -159,8 +176,8 @@ html.toast-root .reveal {
   padding: 5px 12px;
   border: none;
   border-radius: 999px;
-  background: var(--accent);
-  color: var(--pond);
+  background: var(--blue-fill);
+  color: #fff;
   font: inherit;
   font-size: 12px;
   font-weight: 650;
@@ -169,7 +186,7 @@ html.toast-root .reveal {
 
 html.toast-root .reveal:focus-visible,
 html.toast-root .close:focus-visible {
-  outline: 2px solid var(--pond);
+  outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
 

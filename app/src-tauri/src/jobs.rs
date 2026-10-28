@@ -118,7 +118,7 @@ fn run_one(app: &AppHandle, id: u64, req: JobRequest, queued: usize) {
             }
         })
     })
-    .unwrap_or_else(|| actions::Outcome::failed("File Beaver hit an internal error on this file. A crash report was saved on this PC.".into()));
+    .unwrap_or_else(|| actions::Outcome::failed("con/vert hit an internal error on this file. A crash report was saved on this PC.".into()));
     log::info!(
         "job {id} finished in {:.1}s: {} | outputs {:?} | errors {:?}",
         started.elapsed().as_secs_f32(),
@@ -216,6 +216,12 @@ fn place_toast(app: &AppHandle, (x, y): (i32, i32)) {
         }
     }
     log::info!("card at ({px}, {py}) size {w}x{h}");
+    // The screen behind the card, for its glass. shortcut: while a card is already up it
+    // keeps its old backdrop (a capture now would include that card); recapture after
+    // hiding it if moved cards ever look off.
+    if !win.is_visible().unwrap_or(false) {
+        let _ = app.emit_to("toast", "backdrop", crate::capture::backdrop(px, py, w, h));
+    }
     let _ = win.set_position(PhysicalPosition::new(px, py));
     // Moving onto a monitor with another DPI can resize it; set the size after moving.
     let _ = win.set_size(PhysicalSize::new(w as u32, h as u32));

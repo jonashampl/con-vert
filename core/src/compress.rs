@@ -67,7 +67,7 @@ fn name_is(obj: Option<&Object>, want: &[u8]) -> bool {
 pub fn compress_pdf(data: &[u8]) -> Result<Vec<u8>> {
     let mut doc = match Document::load_mem(data) {
         Ok(d) => d,
-        Err(_) => bail!("this PDF is damaged or uses a structure File Beaver can't read"),
+        Err(_) => bail!("this PDF is damaged or uses a structure con/vert can't read"),
     };
     if doc.is_encrypted() {
         bail!("password-protected PDFs aren't supported");

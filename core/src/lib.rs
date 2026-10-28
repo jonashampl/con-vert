@@ -8,6 +8,7 @@ pub mod docx;
 pub mod encode;
 pub mod formats;
 pub mod geometry;
+pub mod icon;
 pub mod menu;
 pub mod metadata;
 pub mod naming;
