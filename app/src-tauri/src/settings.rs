@@ -40,6 +40,8 @@ pub struct Settings {
     pub beaver_pos: Option<(i32, i32)>,
     /// Icon edge in logical px: 32, 48 or 96, like Windows desktop icons.
     pub icon_size: i32,
+    /// Converting several files at once saves one ZIP (the switch in the ring's centre).
+    pub zip_batches: bool,
 }
 
 impl Default for Settings {
@@ -53,6 +55,7 @@ impl Default for Settings {
             show_beaver: true,
             beaver_pos: None,
             icon_size: 48,
+            zip_batches: false,
         }
     }
 }
@@ -78,6 +81,7 @@ pub fn save(app: &AppHandle, s: &Settings) -> std::io::Result<()> {
 pub fn apply(app: &AppHandle, s: &Settings) {
     use tauri_plugin_autostart::ManagerExt;
     trigger::set_enabled(s.enabled);
+    trigger::set_zip(s.zip_batches);
     crate::beaver::set_visible(s.show_beaver);
     trigger::set_key(match s.trigger {
         Trigger::Shift => TriggerKey::Shift,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Crop, EyeOff, Image, PenLine, Shrink, SlidersHorizontal, Tag, type LucideIcon } from "lucide-react";
+import { Archive, Crop, EyeOff, Gauge, Image, ImageDown, PenLine, Scissors, Shrink, SlidersHorizontal, Tag, Volume2, Waves, type LucideIcon } from "lucide-react";
 import "./ring.css";
 
 // Geometry in logical px. Must match trigger.rs (WIN_LOGICAL, RING_R_LOGICAL)
@@ -25,6 +25,7 @@ type RingEvent =
   | { type: "hover"; index: number }
   | { type: "thumb"; src: string }
   | { type: "chosen"; index: number }
+  | { type: "zip"; on: boolean }
   | { type: "hide" };
 
 const ICONS: Record<string, LucideIcon> = {
@@ -35,6 +36,12 @@ const ICONS: Record<string, LucideIcon> = {
   image: Image,
   crop: Crop,
   "eye-off": EyeOff,
+  archive: Archive,
+  gauge: Gauge,
+  volume: Volume2,
+  scissors: Scissors,
+  waves: Waves,
+  "image-down": ImageDown,
 };
 
 /** Audio and video files: a record spinning in the hub, in place of a thumbnail. */
@@ -116,6 +123,8 @@ export default function Ring() {
   const [hover, setHover] = useState(-1);
   const [thumb, setThumb] = useState<string | null>(null);
   const [chosen, setChosen] = useState(-1);
+  // Several files on the Convert page: save them separately or as one ZIP.
+  const [zip, setZip] = useState(false);
   // Where the floating beaver sits under the ring while a file is dragged from it, so you
   // can see where to let go; null once the file is down (then you click a petal).
   const [beaver, setBeaver] = useState<[number, number, number] | null>(null);
@@ -153,6 +162,9 @@ export default function Ring() {
           break;
         case "chosen":
           setChosen(e.index);
+          break;
+        case "zip":
+          setZip(e.on);
           break;
         case "hide":
           setShown(0);
@@ -238,6 +250,15 @@ export default function Ring() {
         <foreignObject x={C - 80} y={C - 15} width={160} height={30}>
           <div className="pill-wrap">
             <div className={`pill ${hovered?.enabled ? "action" : ""}`}>{pill}</div>
+          </div>
+        </foreignObject>
+      )}
+      {menu && page === 0 && menu.title.endsWith("files") && (
+        // Same box as core geometry::on_zip_switch: |dx| <= 0.22 R, dy 0.10..0.24 R.
+        <foreignObject x={C - 0.22 * R} y={C + 0.1 * R} width={0.44 * R} height={0.14 * R}>
+          <div className="zip-switch" title="Save the results as one ZIP">
+            <span className={zip ? "" : "on"}>Files</span>
+            <span className={zip ? "on" : ""}>ZIP</span>
           </div>
         </foreignObject>
       )}

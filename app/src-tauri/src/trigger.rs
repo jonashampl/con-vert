@@ -76,6 +76,8 @@ pub enum RingEvent {
     Hover { index: i32 },
     Thumb { src: String },
     Chosen { index: i32 },
+    /// Several converted files go into one ZIP.
+    Zip { on: bool },
     Hide,
 }
 
@@ -92,6 +94,8 @@ pub struct Hooks {
     /// Its size in logical px.
     pub icon_size: i32,
     pub on_beaver: Box<dyn Fn(crate::beaver::BeaverEvent) + Send + Sync>,
+    /// The Files / ZIP switch was flipped (to remember it).
+    pub on_zip: Box<dyn Fn(bool) + Send + Sync>,
 }
 
 static HOOKS: OnceLock<Hooks> = OnceLock::new();
@@ -125,6 +129,17 @@ static RADIUS: AtomicI32 = AtomicI32::new(180);
 static HOVER: AtomicI32 = AtomicI32::new(-1);
 static PAGE: AtomicUsize = AtomicUsize::new(0);
 static MENU: Mutex<Option<Menu>> = Mutex::new(None);
+/// Converting several files saves one ZIP instead of separate files.
+static ZIP: AtomicBool = AtomicBool::new(false);
+
+pub fn set_zip(on: bool) {
+    ZIP.store(on, SeqCst);
+}
+
+/// The action to run: "convert:mp3+zip" when the switch is on and several files go in.
+fn with_zip(id: String, files: usize) -> String {
+    if ZIP.load(SeqCst) && files > 1 && id.starts_with("convert:") { format!("{id}+zip") } else { id }
+}
 
 static SHIFT_HELD: AtomicBool = AtomicBool::new(false);
 static CTRL_HELD: AtomicBool = AtomicBool::new(false);
@@ -487,6 +502,7 @@ impl DropTarget_Impl {
         *menu_lock() = Some(m.clone());
         HOVER.store(-2, SeqCst); // force a hover event after the menu arrives
         emit(RingEvent::Menu { menu: m, page });
+        emit(RingEvent::Zip { on: ZIP.load(SeqCst) });
 
         let first = paths[0].clone();
         std::thread::spawn(move || {
@@ -541,7 +557,7 @@ impl DropTarget_Impl {
                 let paths = obj.and_then(read_paths).unwrap_or_default();
                 log::info!("drop action={id} files={paths:?}");
                 emit(RingEvent::Chosen { index: w });
-                (hooks().on_drop)(id, paths);
+                (hooks().on_drop)(with_zip(id, paths.len()), paths);
                 post(WM_APP_HIDE, 160, 0); // let the chosen petal pulse
             }
             // Dropped on the beaver itself (the hub): keep the ring open and wait for a click.
@@ -711,11 +727,19 @@ fn click_at(x: i32, y: i32) {
         log::info!("click action={id} files={paths:?}");
         emit(RingEvent::Chosen { index: w });
         CLICK_MODE.store(false, SeqCst);
-        (hooks().on_drop)(id, paths);
+        (hooks().on_drop)(with_zip(id, paths.len()), paths);
         post(WM_APP_HIDE, 160, 0);
     } else if w < 0 {
-        // The hub (the beaver): switch Convert / Tools.
-        flip_page();
+        let (dx, dy) = ((x - CENTER_X.load(SeqCst)) as f64, (y - CENTER_Y.load(SeqCst)) as f64);
+        let several = PENDING.lock().unwrap_or_else(|e| e.into_inner()).len() > 1;
+        if several && PAGE.load(SeqCst) == shiftdrop_core::menu::CONVERT_PAGE && shiftdrop_core::geometry::on_zip_switch(dx, dy, RADIUS.load(SeqCst) as f64) {
+            let on = !ZIP.fetch_xor(true, SeqCst);
+            emit(RingEvent::Zip { on });
+            (hooks().on_zip)(on);
+        } else {
+            // The hub: switch Convert / Tools.
+            flip_page();
+        }
     }
 }
 

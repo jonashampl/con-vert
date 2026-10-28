@@ -20,9 +20,27 @@ pub fn wedge_index(dx: f64, dy: f64, radius: f64, n: usize) -> i32 {
     (((a + step / 2.0) / step) as usize % n) as i32
 }
 
+/// The Files / ZIP switch under the hub's label (shown when several files are dropped),
+/// relative to the ring centre. Ring.tsx draws it at the same place; it sits inside the hub.
+pub fn on_zip_switch(dx: f64, dy: f64, radius: f64) -> bool {
+    dx.abs() <= 0.22 * radius && (0.1 * radius..=0.24 * radius).contains(&dy)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::wedge_index;
+    use super::{on_zip_switch, wedge_index, HUB_RATIO};
+
+    #[test]
+    fn zip_switch_sits_inside_the_hub() {
+        let r = 180.0;
+        assert!(on_zip_switch(0.0, 30.0, r));
+        assert!(!on_zip_switch(0.0, 0.0, r)); // the label above it flips pages
+        assert!(!on_zip_switch(0.0, -30.0, r));
+        // Its far corners are still hub, not petals.
+        let corner = (0.22f64 * r).hypot(0.24 * r);
+        assert!(corner < HUB_RATIO * r);
+        assert_eq!(wedge_index(0.22 * r, 0.24 * r, r, 8), -1);
+    }
 
     #[test]
     fn seven_tool_ring_angles() {

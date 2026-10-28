@@ -1,6 +1,7 @@
 //! Audio: converts audio and video files to audio formats with the bundled FFmpeg
 //! (an LGPL build shipped next to the app as ffmpeg.exe). Video files give up their
-//! sound track. Results are new files, like every other action.
+//! sound track. Converted files are named with their tempo and key (analyze.rs). Results
+//! are new files, like every other action; the audio tools ring lives here too.
 
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
@@ -12,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{bail, Context, Result};
 
 use crate::actions::{Outcome, Progress};
+use crate::analyze;
 use crate::convert::name;
 use crate::naming::{self, OutputDir};
 
@@ -99,12 +101,12 @@ fn explain(stderr: &[String]) -> String {
     }
 }
 
-/// Runs FFmpeg on one file into `output`, reporting 0..1 as it goes.
-fn encode(ffmpeg: &Path, input: &Path, output: &Path, target: &str, cancel: &AtomicBool, on_fraction: &mut dyn FnMut(f32)) -> Result<()> {
+/// Runs FFmpeg with `args`, reporting 0..1 as it goes (from its -progress output).
+fn ffmpeg_run(ffmpeg: &Path, args: Vec<OsString>, cancel: &AtomicBool, on_fraction: &mut dyn FnMut(f32)) -> Result<()> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut child = Command::new(ffmpeg)
-        .args(args(input, output, target))
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -153,36 +155,231 @@ fn encode(ffmpeg: &Path, input: &Path, output: &Path, target: &str, cancel: &Ato
     Ok(())
 }
 
-/// Converts each file to `target` ("mp3"), one after another (FFmpeg already uses every
-/// core). Results go next to the originals as "<name>.<ext>".
-pub fn run(paths: &[PathBuf], target: &str, out: &OutputDir, cancel: &AtomicBool, progress: &mut (dyn FnMut(Progress) + Send)) -> Outcome {
-    let Some(ffmpeg) = ffmpeg() else {
-        return Outcome::failed("FFmpeg is missing from the app folder; reinstall con/vert".into());
+/// Length in seconds and sample rate, from FFmpeg's description of the file.
+pub fn probe(ffmpeg: &Path, path: &Path) -> (Option<f64>, Option<u32>) {
+    use std::os::windows::process::CommandExt;
+    let Ok(out) = Command::new(ffmpeg).args(["-hide_banner", "-nostdin", "-i"]).arg(path).stdin(Stdio::null()).creation_flags(0x0800_0000).output() else {
+        return (None, None);
     };
+    let text = String::from_utf8_lossy(&out.stderr);
+    let duration = text.lines().find_map(parse_duration);
+    let rate = text
+        .lines()
+        .filter(|l| l.contains("Audio:"))
+        .find_map(|l| l.split(',').find_map(|part| part.trim().strip_suffix(" Hz")?.parse().ok()));
+    (duration, rate)
+}
+
+fn missing() -> Outcome {
+    Outcome::failed("FFmpeg is missing from the app folder; reinstall con/vert".into())
+}
+
+/// Runs `each` on every file in turn (FFmpeg already uses every core). `each` gets a
+/// reporter taking this file's fraction and an optional phase ("Reading tempo and key"),
+/// and returns the file it saved, if any. Stops at once when cancelled.
+fn one_by_one(
+    paths: &[PathBuf],
+    cancel: &AtomicBool,
+    progress: &mut (dyn FnMut(Progress) + Send),
+    mut each: impl FnMut(&Path, &mut dyn FnMut(f32, &str)) -> Result<Option<PathBuf>>,
+) -> Outcome {
     let total = paths.len();
     let mut outcome = Outcome::default();
     for (i, src) in paths.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
             return Outcome::cancelled();
         }
-        let detail = format!("{} of {total} file(s)", i + 1);
-        progress(Progress { fraction: i as f32 / total as f32, detail: detail.clone() });
-        let mut report = |f: f32| progress(Progress { fraction: (i as f32 + f) / total as f32, detail: detail.clone() });
-        let saved = naming::write_new_with(&naming::target_dir(src, out), &naming::stem(src), target, |tmp| {
-            encode(&ffmpeg, src, tmp, target, cancel, &mut report)
-        });
-        match saved {
-            Ok(p) => outcome.outputs.push(p),
+        let count = format!("{} of {total} file(s)", i + 1);
+        let mut report = |f: f32, phase: &str| {
+            let detail = if phase.is_empty() { count.clone() } else { format!("{phase} · {count}") };
+            progress(Progress { fraction: (i as f32 + f.clamp(0.0, 1.0)) / total as f32, detail })
+        };
+        report(0.0, "");
+        match each(src, &mut report) {
+            Ok(saved) => outcome.outputs.extend(saved),
             Err(_) if cancel.load(Ordering::SeqCst) => return Outcome::cancelled(),
             Err(e) => outcome.errors.push(format!("{}: {e:#}", name(src))),
         }
     }
     outcome.summary = match outcome.outputs.as_slice() {
-        [] => format!("Couldn't convert {} file(s)", outcome.errors.len()),
+        [] if outcome.errors.is_empty() => "Nothing to do".into(),
+        [] => format!("Couldn't process {} file(s)", outcome.errors.len()),
         [one] => format!("Saved {}", name(one)),
         many => format!("Saved {} files", many.len()),
     };
     outcome
+}
+
+/// The file's name with its tempo and key added ("Song 124 BPM Am"), or as it was when
+/// neither could be found.
+fn tagged_stem(ffmpeg: &Path, src: &Path) -> String {
+    let stem = naming::stem(src);
+    match analyze::analyze(ffmpeg, src) {
+        Ok((bpm, key)) => analyze::tagged_stem(&stem, bpm, key),
+        Err(_) => stem,
+    }
+}
+
+/// Converts each file to `target` ("mp3"). Results go next to the originals, named with
+/// their tempo and key: "Song 124 BPM Am.mp3".
+pub fn run(paths: &[PathBuf], target: &str, out: &OutputDir, cancel: &AtomicBool, progress: &mut (dyn FnMut(Progress) + Send)) -> Outcome {
+    let Some(ff) = ffmpeg() else { return missing() };
+    one_by_one(paths, cancel, progress, |src, report| {
+        report(0.0, "Reading tempo and key");
+        let stem = tagged_stem(&ff, src);
+        naming::write_new_with(&naming::target_dir(src, out), &stem, target, |tmp| ffmpeg_run(&ff, args(src, tmp, target), cancel, &mut |f| report(f, "")))
+            .map(Some)
+    })
+}
+
+/// The audio tools ring, clockwise from the top: (id, label, icon).
+pub const TOOLS: [(&str, &str, &str); 8] = [
+    ("zip", "Zip", "archive"),
+    ("bpmkey", "BPM + Key", "gauge"),
+    ("loudness", "Loudness", "volume"),
+    ("trim", "Trim", "scissors"),
+    ("compress", "Compress", "compress"),
+    ("fade", "Fade", "waves"),
+    ("metadata", "Tags", "tag"),
+    ("cover", "Cover", "image-down"),
+];
+
+/// Zip and BPM + Key take any audio or video; the rest re-encode, so they need files in
+/// a format con/vert writes.
+pub fn tool_enabled(id: &str, paths: &[&Path]) -> bool {
+    !paths.is_empty()
+        && paths.iter().all(|p| is_media(p))
+        && match id {
+            "zip" | "bpmkey" => true,
+            _ => paths.iter().all(|p| own_target(p).is_some()),
+        }
+}
+
+/// Smaller settings per format, and the format the result is saved in (WAV becomes FLAC:
+/// same sound, about half the size).
+fn smaller(ext: &str) -> (&'static str, &'static [&'static str]) {
+    match ext {
+        "mp3" => ("mp3", &["-c:a", "libmp3lame", "-b:a", "128k"]),
+        "m4a" => ("m4a", &["-c:a", "aac", "-b:a", "128k"]),
+        "aac" => ("aac", &["-c:a", "aac", "-b:a", "128k", "-f", "adts"]),
+        "ogg" => ("ogg", &["-c:a", "libvorbis", "-q:a", "3"]),
+        "opus" => ("opus", &["-c:a", "libopus", "-b:a", "96k"]),
+        _ => ("flac", &["-c:a", "flac", "-compression_level", "12"]),
+    }
+}
+
+fn os(v: &[&str]) -> Vec<OsString> {
+    v.iter().map(OsString::from).collect()
+}
+
+/// FFmpeg arguments for an audio tool writing `output` from `input`.
+fn tool_args(id: &str, input: &Path, output: &Path, ext: &str, duration: Option<f64>, rate: Option<u32>) -> Result<Vec<OsString>> {
+    let mut a = os(&["-hide_banner", "-nostdin", "-n", "-i"]);
+    a.push(input.into());
+    let codec = TARGETS.iter().find(|t| t.0 == ext).map(|t| t.1).unwrap_or(&[]);
+    let filter = |a: &mut Vec<OsString>, af: String| {
+        a.extend(os(&["-map", "0:a:0", "-map_metadata", "0", "-af"]));
+        a.push(af.into());
+        a.extend(os(codec));
+    };
+    match id {
+        // -14 LUFS integrated, -1.5 dB true peak: what streaming services play at.
+        "loudness" => filter(&mut a, format!("loudnorm=I=-14:TP=-1.5:LRA=11,aresample={}", rate.unwrap_or(44100))),
+        "trim" => {
+            let cut = "silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.05";
+            filter(&mut a, format!("{cut},areverse,{cut},areverse"))
+        }
+        "fade" => {
+            let len = duration.context("can't read how long this file is")?;
+            let d = (len / 4.0).min(2.0);
+            filter(&mut a, format!("afade=t=in:d={d:.2},afade=t=out:st={:.2}:d={d:.2}", len - d))
+        }
+        "compress" => {
+            a.extend(os(&["-map", "0:a:0", "-map_metadata", "0"]));
+            a.extend(os(smaller(ext).1));
+        }
+        // Stream copy: the sound is untouched, only the tags and embedded pictures go.
+        "metadata" => a.extend(os(&["-map", "0:a", "-map_metadata", "-1", "-c", "copy", "-fflags", "+bitexact", "-flags:a", "+bitexact"])),
+        "cover" => a.extend(os(&["-map", "0:v:0", "-frames:v", "1", "-an", "-q:v", "2"])),
+        other => bail!("{other} isn't an audio tool"),
+    }
+    a.extend(os(&["-progress", "pipe:1", "-nostats"]));
+    a.push(output.into());
+    Ok(a)
+}
+
+/// Runs an audio tool ("loudness", "zip", ...) on the dropped files.
+pub fn tool(id: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, progress: &mut (dyn FnMut(Progress) + Send)) -> Outcome {
+    let Some(ff) = ffmpeg() else { return missing() };
+    match id {
+        "zip" => zip(paths, out, cancel, progress),
+        "bpmkey" => one_by_one(paths, cancel, progress, |src, report| {
+            report(0.0, "Reading tempo and key");
+            let stem = tagged_stem(&ff, src);
+            if stem == naming::stem(src) {
+                bail!("no steady beat or clear key found");
+            }
+            let ext = src.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+            naming::write_new_with(&naming::target_dir(src, out), &stem, &ext, |tmp| {
+                std::fs::copy(src, tmp).map(|_| ()).context("can't copy the file")
+            })
+            .map(Some)
+        }),
+        _ => {
+            let mut sizes: Vec<(u64, u64)> = Vec::new();
+            let mut o = one_by_one(paths, cancel, progress, |src, report| {
+                let ext = own_target(src).context("this format can't be edited; convert it first")?;
+                let (out_ext, suffix) = match id {
+                    "loudness" => (ext, "Normalized"),
+                    "trim" => (ext, "Trimmed"),
+                    "fade" => (ext, "Faded"),
+                    "compress" => (smaller(ext).0, "Compressed"),
+                    "metadata" => (ext, "Clean"),
+                    "cover" => ("jpg", "Cover"),
+                    other => bail!("{other} isn't an audio tool"),
+                };
+                let (duration, rate) = probe(&ff, src);
+                let stem = format!("{} {suffix}", naming::stem(src));
+                let saved = naming::write_new_with(&naming::target_dir(src, out), &stem, out_ext, |tmp| {
+                    ffmpeg_run(&ff, tool_args(id, src, tmp, ext, duration, rate)?, cancel, &mut |f| report(f, "")).map_err(|e| {
+                        if id == "cover" && e.to_string() == "this file has no sound" { anyhow::anyhow!("this file has no cover art") } else { e }
+                    })
+                })?;
+                if id == "compress" {
+                    let (before, after) = (std::fs::metadata(src)?.len(), std::fs::metadata(&saved)?.len());
+                    if after >= before {
+                        std::fs::remove_file(&saved)?;
+                        return Ok(None);
+                    }
+                    sizes.push((before, after));
+                }
+                Ok(Some(saved))
+            });
+            if id == "compress" && !o.cancelled {
+                o.summary = match sizes.iter().fold((0, 0), |(x, y), (b, a)| (x + b, y + a)) {
+                    (_, 0) if o.errors.is_empty() => "Already well compressed, nothing saved".into(),
+                    (_, 0) => o.summary,
+                    (b, a) => format!("{} → {} (−{:.0}%)", crate::compress::human(b), crate::compress::human(a), 100.0 * (1.0 - a as f64 / b as f64)),
+                };
+            }
+            o
+        }
+    }
+}
+
+/// All the files, as they are, in one ZIP named after the folder they're in (or the file,
+/// for one).
+fn zip(paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, progress: &mut (dyn FnMut(Progress) + Send)) -> Outcome {
+    let Some(first) = paths.first() else { return Outcome::default() };
+    let stem = match paths {
+        [one] => naming::stem(one),
+        _ => first.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Audio".into()),
+    };
+    match crate::actions::zip_into(paths, &naming::target_dir(first, out), &stem, cancel, progress) {
+        Ok(p) => Outcome { summary: format!("Saved {} ({} file(s))", name(&p), paths.len()), outputs: vec![p], ..Default::default() },
+        Err(_) if cancel.load(Ordering::SeqCst) => Outcome::cancelled(),
+        Err(e) => Outcome::failed(format!("{e:#}")),
+    }
 }
 
 #[cfg(test)]
@@ -234,9 +431,10 @@ mod tests {
         };
         let dir = std::env::temp_dir().join(format!("convert-audio-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("Tone.wav");
+        // Tagged like DJ software does, so the name it gets is known.
+        let src = dir.join("Tone.flac");
         let ok = Command::new(&ff)
-            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2"])
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-metadata", "BPM=124", "-metadata", "KEY=Am"])
             .arg(&src)
             .status()
             .unwrap();
@@ -247,8 +445,7 @@ mod tests {
             let o = run(std::slice::from_ref(&src), id, &OutputDir::Beside, &cancel, &mut |p| last = p.fraction);
             assert!(o.errors.is_empty(), "{id}: {:?}", o.errors);
             let out = &o.outputs[0];
-            let want = if id == "wav" { "Tone (2).wav".to_string() } else { format!("Tone.{id}") };
-            assert_eq!(out.file_name().unwrap().to_string_lossy(), want);
+            assert_eq!(out.file_name().unwrap().to_string_lossy(), format!("Tone 124 BPM Am.{id}"));
             assert!(std::fs::metadata(out).unwrap().len() > 1000, "{id} output is empty");
             assert!(last > 0.0);
         }
@@ -263,6 +460,59 @@ mod tests {
         let o = run(std::slice::from_ref(&silent), "mp3", &OutputDir::Beside, &cancel, &mut |_| {});
         assert!(o.errors[0].ends_with("this file has no sound"), "{:?}", o.errors);
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), before);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The audio tools end to end; runs when CONVERT_FFMPEG points at ffmpeg.exe.
+    #[test]
+    fn audio_tools_work() {
+        let Some(ff) = ffmpeg() else {
+            eprintln!("skipped: set CONVERT_FFMPEG to run the audio tools test");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("convert-tools-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 1 s of silence, 3 s of tone, 1 s of silence.
+        let make = |file: &str, extra: &[&str]| {
+            let p = dir.join(file);
+            let ok = Command::new(&ff)
+                .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=3,adelay=1000,apad=pad_dur=1"])
+                .args(extra)
+                .arg(&p)
+                .status()
+                .unwrap();
+            assert!(ok.success());
+            p
+        };
+        let mp3 = make("Song.mp3", &["-b:a", "320k", "-metadata", "comment=secret"]);
+        let wav = make("Take.wav", &[]);
+        let cancel = AtomicBool::new(false);
+        let run_tool = |id: &str, files: &[PathBuf]| tool(id, files, &OutputDir::Beside, &cancel, &mut |_| {});
+        let length = |p: &Path| probe(&ff, p).0.unwrap();
+
+        for (id, want) in [("loudness", "Song Normalized.mp3"), ("fade", "Song Faded.mp3"), ("metadata", "Song Clean.mp3"), ("compress", "Song Compressed.mp3")] {
+            let o = run_tool(id, std::slice::from_ref(&mp3));
+            assert!(o.errors.is_empty(), "{id}: {:?}", o.errors);
+            assert_eq!(o.outputs[0].file_name().unwrap().to_string_lossy(), want, "{id}");
+        }
+        let trimmed = run_tool("trim", std::slice::from_ref(&wav));
+        assert!(trimmed.errors.is_empty(), "{:?}", trimmed.errors);
+        assert!(length(&trimmed.outputs[0]) < 3.3, "silence left: {}", length(&trimmed.outputs[0]));
+        // WAV compresses to FLAC.
+        let small = run_tool("compress", std::slice::from_ref(&wav));
+        assert_eq!(small.outputs[0].extension().unwrap(), "flac");
+        assert!(small.summary.contains('→'), "{}", small.summary);
+        // No picture in the file: a plain reason, nothing saved.
+        let cover = run_tool("cover", std::slice::from_ref(&mp3));
+        assert!(cover.errors[0].ends_with("this file has no cover art"), "{:?}", cover.errors);
+        // Zip: both files, one archive named after the folder.
+        let z = run_tool("zip", &[mp3.clone(), wav.clone()]);
+        assert!(z.errors.is_empty(), "{:?}", z.errors);
+        let archive = zip::ZipArchive::new(std::fs::File::open(&z.outputs[0]).unwrap()).unwrap();
+        let mut names: Vec<&str> = archive.file_names().collect();
+        names.sort();
+        assert_eq!(names, ["Song.mp3", "Take.wav"]);
+        assert!(tool_enabled("loudness", &[mp3.as_path()]) && !tool_enabled("loudness", &[Path::new("clip.mp4")]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

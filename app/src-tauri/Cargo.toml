@@ -72,3 +72,7 @@ features = [
 # Image codecs are unusably slow unoptimised; optimise dependencies even in debug builds.
 [profile.dev.package."*"]
 opt-level = 3
+
+# Tempo and key analysis is unusably slow unoptimised, even in debug builds.
+[profile.dev.package.shiftdrop-core]
+opt-level = 3

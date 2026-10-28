@@ -213,7 +213,16 @@ pub fn run() {
             let ring_emitter = handle.clone();
             let drop_handle = handle.clone();
             let beaver_handle = handle.clone();
+            let zip_handle = handle.clone();
             trigger::start(trigger::Hooks {
+                on_zip: Box::new(move |on| {
+                    let state = zip_handle.state::<AppState>();
+                    let mut s = state.settings.lock().unwrap_or_else(|e| e.into_inner());
+                    s.zip_batches = on;
+                    if let Err(e) = settings::save(&zip_handle, &s) {
+                        log::warn!("could not save the ZIP switch: {e}");
+                    }
+                }),
                 beaver_pos: s.beaver_pos,
                 icon_size: s.icon_size,
                 // Runs on the drag thread: quick settings updates only.

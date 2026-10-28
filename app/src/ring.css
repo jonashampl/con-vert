@@ -208,6 +208,33 @@ html.ring-root #root {
   font-weight: 700;
 }
 
+/* Files / ZIP: a small segmented switch under the hub's label. */
+.zip-switch {
+  box-sizing: border-box;
+  display: flex;
+  height: 100%;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 10.5px;
+  font-weight: 650;
+  color: rgba(235, 235, 245, 0.7);
+  cursor: pointer;
+}
+
+.zip-switch span {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+
+.zip-switch span.on {
+  background: #0068e0;
+  color: #fff;
+}
+
 /* The floating icon, drawn where it sits under the ring: let go on it to pick by click. */
 .beaver-spot circle {
   fill: rgba(22, 22, 26, 0.88);

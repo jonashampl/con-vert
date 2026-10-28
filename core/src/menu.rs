@@ -121,7 +121,20 @@ pub fn build(paths: &[String], caps: &Caps) -> Menu {
     let formats: Vec<Option<Format>> = paths.iter().map(|p| Format::from_path(Path::new(p))).collect();
     let media = !paths.is_empty() && paths.iter().all(|p| crate::audio::is_media(Path::new(p)));
     let convert = if media { audio_page(paths, caps) } else { convert_page(&formats, caps) };
-    let tools = tools_page(&formats, caps);
+    let tools = if media {
+        let ps: Vec<&Path> = paths.iter().map(Path::new).collect();
+        crate::audio::TOOLS
+            .iter()
+            .map(|(id, label, icon)| Segment {
+                id: format!("tool:{id}"),
+                label: label.to_string(),
+                icon: Some(icon),
+                enabled: caps.audio && crate::audio::tool_enabled(id, &ps),
+            })
+            .collect()
+    } else {
+        tools_page(&formats, caps)
+    };
     let images = formats.iter().all(|f| f.is_some_and(|f| f.is_image()));
     let start_page = if convert.iter().any(|s| s.enabled) && !(images && tools.iter().any(|s| s.enabled)) {
         CONVERT_PAGE
@@ -240,7 +253,9 @@ mod tests {
         assert!(m.media);
         assert_eq!(m.start_page, CONVERT_PAGE);
         assert_eq!(enabled(&m.pages[CONVERT_PAGE]), ["convert:mp3", "convert:wav", "convert:flac", "convert:m4a", "convert:ogg", "convert:opus", "convert:aac"]);
-        assert!(enabled(&m.pages[TOOLS_PAGE]).is_empty());
+        // A video can be zipped or named by tempo and key; editing tools need audio.
+        assert_eq!(enabled(&m.pages[TOOLS_PAGE]), ["tool:zip", "tool:bpmkey"]);
+        assert_eq!(enabled(&build(&["a.wav".into()], &Caps::ALL).pages[TOOLS_PAGE]).len(), 8);
         // An MP3 isn't offered MP3; a mixed audio batch gets every target.
         assert!(!ids(&build(&["a.mp3".into()], &Caps::ALL).pages[CONVERT_PAGE]).contains(&"convert:mp3"));
         assert_eq!(build(&["a.mp3".into(), "b.wav".into()], &Caps::ALL).pages[CONVERT_PAGE].len(), 7);
