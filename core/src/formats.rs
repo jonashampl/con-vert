@@ -116,11 +116,13 @@ pub struct Caps {
     pub heic_decode: bool,
     pub heic_encode: bool,
     pub avif_decode: bool,
+    /// The bundled FFmpeg is there, so audio and video can be converted.
+    pub audio: bool,
 }
 
 impl Caps {
     /// Everything available; for tests of menu logic.
-    pub const ALL: Caps = Caps { heic_decode: true, heic_encode: true, avif_decode: true };
+    pub const ALL: Caps = Caps { heic_decode: true, heic_encode: true, avif_decode: true, audio: true };
 
     pub fn can_read(&self, f: Format) -> bool {
         match f {

@@ -88,8 +88,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "externalBin": ["binaries/ffmpeg"],
     "resources": {
-      "../../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
+      "../../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt",
+      "../../licensing/ffmpeg-LICENSE.txt": "ffmpeg-LICENSE.txt"
     },
     "windows": {
       "webviewInstallMode": {

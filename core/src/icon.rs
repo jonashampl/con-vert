@@ -1,6 +1,6 @@
 //! The floating con/vert icon as liquid glass: a squircle that blurs and bends whatever is
-//! behind it, split along the diagonal into a blue pane (a video screen with a play mark)
-//! and a clear pane (sound bars). Pure pixels; the widget passes in the screen patch.
+//! behind it, split along the diagonal into two clear panes: a video screen with a play
+//! mark, and sound bars. Pure pixels; the widget passes in the screen patch.
 //!
 //! Drawn from signed distance fields in a 100x100 icon space, so it stays crisp at every
 //! size the widget uses (32 to 96 logical px at any display scale).
@@ -8,7 +8,6 @@
 use image::{Rgba, RgbaImage};
 
 const SQRT2: f32 = std::f32::consts::SQRT_2;
-const BLUE: [f32; 3] = [10.0, 132.0, 255.0];
 const WHITE: [f32; 3] = [255.0, 255.0, 255.0];
 
 /// Distance to a rounded box centred at (cx, cy) with half-size (hw, hh); negative inside.
@@ -105,10 +104,8 @@ pub fn glass(backdrop: &RgbaImage) -> RgbaImage {
             *v = ((luma + (*v - luma) * 1.6) * 1.08).clamp(0.0, 255.0);
         }
 
-        // Two panes split along the diagonal, then a sheen across the top.
-        let left_pane = cov((x + y - 100.0) / SQRT2);
-        over(&mut c, BLUE, 0.34 * left_pane);
-        over(&mut c, WHITE, 0.07 * (1.0 - left_pane));
+        // Clear glass with a faint frost, then a sheen across the top.
+        over(&mut c, WHITE, 0.07);
         if y < 45.0 {
             over(&mut c, WHITE, 0.38 * (1.0 - y / 45.0));
         }
@@ -144,9 +141,11 @@ mod tests {
         // The tallest sound bar is white.
         let bar = g.get_pixel(69, 50);
         assert!(bar[0] > 230 && bar[1] > 230 && bar[2] > 230, "{bar:?}");
-        // The upper-left pane is tinted blue over the green backdrop.
-        let pane = g.get_pixel(22, 20);
-        assert!(pane[2] > pane[0] + 40, "{pane:?}");
+        // Both panes are clear: the green backdrop shows through, untinted.
+        for (x, y) in [(22, 20), (80, 82)] {
+            let pane = g.get_pixel(x, y);
+            assert!(pane[1] > pane[0] && pane[1] > pane[2], "{pane:?}");
+        }
         // The play mark sits inside the screen and is white.
         let play = g.get_pixel(36, 50);
         assert!(play[0] > 230, "{play:?}");

@@ -44,13 +44,19 @@ pub fn is_quick(action: &str) -> bool {
     action.starts_with("convert:") || action == "tool:compress" || action == "tool:metadata"
 }
 
+/// "JPG" or "MP3" for a convert action.
+fn target_label(action: &str) -> Option<String> {
+    let id = action.strip_prefix("convert:")?;
+    (Format::from_id(id).is_some() || crate::audio::is_target(id)).then(|| id.to_ascii_uppercase())
+}
+
 /// Card title while running, e.g. "Converting to JPG".
 pub fn title(action: &str) -> String {
     match action {
         "tool:compress" => "Compressing".into(),
         "tool:metadata" => "Removing metadata".into(),
-        a => match a.strip_prefix("convert:").and_then(Format::from_id) {
-            Some(f) => format!("Converting to {}", f.label()),
+        a => match target_label(a) {
+            Some(f) => format!("Converting to {f}"),
             None => "Working".into(),
         },
     }
@@ -67,8 +73,8 @@ pub fn done_title(action: &str, o: &Outcome) -> String {
     match action {
         "tool:compress" => "Compressed".into(),
         "tool:metadata" => "Metadata removed".into(),
-        a => match a.strip_prefix("convert:").and_then(Format::from_id) {
-            Some(f) => format!("Converted to {}", f.label()),
+        a => match target_label(a) {
+            Some(f) => format!("Converted to {f}"),
             None => "Done".into(),
         },
     }
@@ -76,6 +82,9 @@ pub fn done_title(action: &str, o: &Outcome) -> String {
 
 pub fn run(action: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, progress: &mut (dyn FnMut(Progress) + Send)) -> Outcome {
     if let Some(id) = action.strip_prefix("convert:") {
+        if crate::audio::is_target(id) {
+            return crate::audio::run(paths, id, out, cancel, progress);
+        }
         return match convert::target(id) {
             Ok(f) => convert::run(paths, f, out, cancel, progress),
             Err(e) => Outcome::failed(format!("{e:#}")),

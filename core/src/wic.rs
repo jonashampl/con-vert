@@ -130,6 +130,7 @@ pub fn caps() -> Caps {
             heic_decode: heif_read && hevc_dec,
             heic_encode,
             avif_decode: heif_read && av1_dec,
+            audio: crate::audio::ffmpeg().is_some(),
         }
     })
 }

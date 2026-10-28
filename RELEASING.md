@@ -8,6 +8,7 @@ How to cut a release. Everything here runs on Windows from the repo root unless 
 |---|---|---|
 | Rust (GNU), MinGW, nasm | `rustup`, `scoop install mingw nasm` | See PLAN.md 3a. |
 | Node 20+ | already installed | `npm install` in `app/`. |
+| FFmpeg (LGPL) | `app/src-tauri/binaries/ffmpeg-x86_64-pc-windows-gnu.exe` | Not in git. `bin/ffmpeg.exe` from BtbN's `ffmpeg-n9.0-latest-win64-lgpl-9.0.zip` (github.com/BtbN/FFmpeg-Builds, release 2026-10-27, SHA-256 `bac7c98811b44cbf3536f2fd8438851446f42b56e379125648212c9e98e3dc07`). Its licence is `licensing/ffmpeg-LICENSE.txt`. Core tests use it via `CONVERT_FFMPEG`. |
 | `cargo-about` | `cargo install cargo-about --locked --features cli` | Builds the licence notices. |
 | **Updater key** | `%USERPROFILE%\.shiftdrop-keys\updater.key` (+ `.pub`) | **Back it up** (password manager / offline). If it's lost, existing installs can never update again. The public key is in `tauri.conf.json > plugins.updater.pubkey`. |
 | Update feed URL | `tauri.conf.json > plugins.updater.endpoints` | Set to `DEVIOUSDEV101/file-beaver`. |

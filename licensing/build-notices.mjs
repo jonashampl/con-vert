@@ -31,6 +31,10 @@ for (const f of ["COPYING", "PATENTS"]) {
   parts.push(`${rule}\nlibwebp (bundled C library) - ${f}\n${rule}\n\n${readFileSync(join(webpDir, f), "utf8").trimEnd()}`);
 }
 
+// 2b. FFmpeg, shipped as ffmpeg.exe (LGPL build; source: https://ffmpeg.org, build scripts:
+//     https://github.com/BtbN/FFmpeg-Builds).
+parts.push(`${rule}\nFFmpeg 9.0 (bundled ffmpeg.exe, LGPL v3 build) - https://ffmpeg.org\n${rule}\n\n${readFileSync(join(here, "ffmpeg-LICENSE.txt"), "utf8").trimEnd()}`);
+
 // 3. npm packages in the shipped UI bundle
 const tree = JSON.parse(execSync("npm ls --omit=dev --all --json", { cwd: app, encoding: "utf8" }));
 const seen = new Map();

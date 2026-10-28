@@ -1,5 +1,8 @@
 # Build output
 target/
+
+# FFmpeg is fetched, not committed (135 MB); see RELEASING.md
+app/src-tauri/binaries/
 app/dist/
 app/node_modules/
 app/src-tauri/gen/

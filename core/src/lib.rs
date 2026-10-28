@@ -1,6 +1,7 @@
 //! Logic with no Tauri dependency, so it can be unit-tested directly.
 
 pub mod actions;
+pub mod audio;
 pub mod compress;
 pub mod convert;
 pub mod decode;

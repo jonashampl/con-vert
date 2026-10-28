@@ -48,6 +48,13 @@ pub fn stem(src: &Path) -> String {
 /// Written to a temporary name first, so a failure never leaves a half-written result,
 /// and moved without replacement, so nothing existing is ever overwritten.
 pub fn write_new(dir: &Path, stem: &str, ext: &str, bytes: &[u8]) -> Result<PathBuf> {
+    write_new_with(dir, stem, ext, |tmp| std::fs::write(tmp, bytes).with_context(|| format!("can't write to {}", tmp.display())))
+}
+
+/// Like [`write_new`], but `write` creates the file itself at the temporary path it's
+/// given (which ends in `.<ext>`, for tools that pick the format by extension). A failed
+/// `write` leaves nothing behind.
+pub fn write_new_with(dir: &Path, stem: &str, ext: &str, write: impl FnOnce(&Path) -> Result<()>) -> Result<PathBuf> {
     let dir = match std::fs::create_dir_all(dir).and_then(|_| probe_writable(dir)) {
         Ok(()) => dir.to_path_buf(),
         Err(_) => {
@@ -56,8 +63,11 @@ pub fn write_new(dir: &Path, stem: &str, ext: &str, bytes: &[u8]) -> Result<Path
             fb
         }
     };
-    let tmp = dir.join(format!(".shiftdrop-{}-{}.partial", std::process::id(), nanos()));
-    std::fs::write(&tmp, bytes).with_context(|| format!("can't write to {}", dir.display()))?;
+    let tmp = dir.join(format!(".shiftdrop-{}-{}.partial.{ext}", std::process::id(), nanos()));
+    if let Err(e) = write(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     for _ in 0..1000 {
         let dest = unique(&dir, stem, ext);
         let moved = unsafe { MoveFileExW(&long_path(&tmp), &long_path(&dest), MOVEFILE_WRITE_THROUGH) };

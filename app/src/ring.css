@@ -41,8 +41,23 @@ html.ring-root #root {
 @media (prefers-reduced-motion: reduce) {
   .ring,
   .petals,
-  .petal.chosen {
+  .petal.chosen,
+  .vinyl {
     animation: none;
+  }
+}
+
+/* The record in the hub turns slowly while the ring is open. */
+.vinyl {
+  transform-box: fill-box;
+  transform-origin: center;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
+  animation: spin 3.2s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

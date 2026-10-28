@@ -16,7 +16,7 @@ const GAP = 7;
 const PLACEHOLDER_SEGMENTS = 8;
 
 type Segment = { id: string; label: string; icon: string | null; enabled: boolean };
-type Menu = { pages: [Segment[], Segment[]]; start_page: number; title: string };
+type Menu = { pages: [Segment[], Segment[]]; start_page: number; title: string; media: boolean };
 type RingEvent =
   | { type: "show"; backdrop: string | null; beaver: [number, number, number] | null }
   | { type: "held" }
@@ -36,6 +36,29 @@ const ICONS: Record<string, LucideIcon> = {
   crop: Crop,
   "eye-off": EyeOff,
 };
+
+/** Audio and video files: a record spinning in the hub, in place of a thumbnail. */
+function Vinyl() {
+  const r = HUB * 0.5;
+  const cy = C - HUB * 0.3;
+  return (
+    <g className="vinyl">
+      <circle cx={C} cy={cy} r={r} fill="#0d0d10" />
+      {[0.84, 0.68].map((k) => (
+        <circle key={k} cx={C} cy={cy} r={r * k} fill="none" stroke="rgba(255,255,255,0.09)" strokeWidth={1} />
+      ))}
+      <path
+        d={`M ${C} ${cy - r * 0.92} A ${r * 0.92} ${r * 0.92} 0 0 1 ${C + r * 0.86} ${cy - r * 0.33}`}
+        fill="none"
+        stroke="rgba(255,255,255,0.24)"
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+      <circle cx={C} cy={cy} r={r * 0.37} fill="#0a84ff" />
+      <circle cx={C} cy={cy} r={r * 0.08} fill="#0d0d10" />
+    </g>
+  );
+}
 
 const point = (r: number, a: number) => `${(C + r * Math.sin(a)).toFixed(2)} ${(C - r * Math.cos(a)).toFixed(2)}`;
 
@@ -198,7 +221,8 @@ export default function Ring() {
       </g>
 
       <circle className="hub" cx={C} cy={C} r={HUB} />
-      {thumb && (
+      {menu?.media && <Vinyl />}
+      {thumb && !menu?.media && (
         <image
           className="thumb"
           href={thumb}

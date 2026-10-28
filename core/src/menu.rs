@@ -27,6 +27,8 @@ pub struct Menu {
     pub start_page: usize,
     /// Shown in the hub: the file's size ("1.2 MB"), or "3 files".
     pub title: String,
+    /// Audio or video files: the hub shows a record instead of a thumbnail.
+    pub media: bool,
 }
 
 pub const CONVERT_PAGE: usize = 0;
@@ -92,6 +94,17 @@ fn tool_enabled(tool: &str, formats: &[Option<Format>], caps: &Caps) -> bool {
     }
 }
 
+/// Audio targets for audio and video files, minus the format every file already is.
+fn audio_page(paths: &[String], caps: &Caps) -> Vec<Segment> {
+    let owns: Vec<Option<&str>> = paths.iter().map(|p| crate::audio::own_target(Path::new(p))).collect();
+    let skip = owns.iter().all(|o| *o == owns[0]).then_some(owns[0]).flatten();
+    crate::audio::TARGETS
+        .iter()
+        .filter(|(id, _)| Some(*id) != skip)
+        .map(|(id, _)| Segment { id: format!("convert:{id}"), label: id.to_ascii_uppercase(), icon: None, enabled: caps.audio })
+        .collect()
+}
+
 fn tools_page(formats: &[Option<Format>], caps: &Caps) -> Vec<Segment> {
     TOOLS
         .iter()
@@ -106,7 +119,8 @@ fn tools_page(formats: &[Option<Format>], caps: &Caps) -> Vec<Segment> {
 
 pub fn build(paths: &[String], caps: &Caps) -> Menu {
     let formats: Vec<Option<Format>> = paths.iter().map(|p| Format::from_path(Path::new(p))).collect();
-    let convert = convert_page(&formats, caps);
+    let media = !paths.is_empty() && paths.iter().all(|p| crate::audio::is_media(Path::new(p)));
+    let convert = if media { audio_page(paths, caps) } else { convert_page(&formats, caps) };
     let tools = tools_page(&formats, caps);
     let images = formats.iter().all(|f| f.is_some_and(|f| f.is_image()));
     let start_page = if convert.iter().any(|s| s.enabled) && !(images && tools.iter().any(|s| s.enabled)) {
@@ -121,7 +135,7 @@ pub fn build(paths: &[String], caps: &Caps) -> Menu {
         },
         many => format!("{} files", many.len()),
     };
-    Menu { pages: [convert, tools], start_page, title }
+    Menu { pages: [convert, tools], start_page, title, media }
 }
 
 /// "840 KB", "1.2 MB", "12 MB": one decimal only below 10.
@@ -198,7 +212,7 @@ mod tests {
 
     #[test]
     fn missing_heic_codecs_grey_out_heic() {
-        let no_heic = Caps { heic_decode: false, heic_encode: false, avif_decode: true };
+        let no_heic = Caps { heic_decode: false, heic_encode: false, avif_decode: true, audio: true };
         let m = build(&["a.png".into()], &no_heic);
         let heic = m.pages[CONVERT_PAGE].iter().find(|s| s.id == "convert:heic").unwrap();
         assert!(!heic.enabled);
@@ -218,6 +232,23 @@ mod tests {
         std::fs::write(&p, vec![0u8; 3 * 1024]).unwrap();
         assert_eq!(build(&[p.to_string_lossy().into_owned()], &Caps::ALL).title, "3.0 KB");
         let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn audio_and_video_open_on_audio_targets() {
+        let m = build(&["C:\\x\\Clip.mp4".into()], &Caps::ALL);
+        assert!(m.media);
+        assert_eq!(m.start_page, CONVERT_PAGE);
+        assert_eq!(enabled(&m.pages[CONVERT_PAGE]), ["convert:mp3", "convert:wav", "convert:flac", "convert:m4a", "convert:ogg", "convert:opus", "convert:aac"]);
+        assert!(enabled(&m.pages[TOOLS_PAGE]).is_empty());
+        // An MP3 isn't offered MP3; a mixed audio batch gets every target.
+        assert!(!ids(&build(&["a.mp3".into()], &Caps::ALL).pages[CONVERT_PAGE]).contains(&"convert:mp3"));
+        assert_eq!(build(&["a.mp3".into(), "b.wav".into()], &Caps::ALL).pages[CONVERT_PAGE].len(), 7);
+        // Without FFmpeg the targets are greyed out.
+        let no_ff = Caps { audio: false, ..Caps::ALL };
+        assert!(enabled(&build(&["a.wav".into()], &no_ff).pages[CONVERT_PAGE]).is_empty());
+        // Audio mixed with a photo: nothing converts both.
+        assert!(!build(&["a.mp3".into(), "b.jpg".into()], &Caps::ALL).media);
     }
 
     #[test]
