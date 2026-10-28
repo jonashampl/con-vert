@@ -1,0 +1,44 @@
+con/vert is free and open source
+=================================
+
+con/vert is open source software under the MIT License (full text below).
+You may use, copy, change and share it, free of charge.
+
+It is built on the source code of File Beaver, created and published by
+DEVIOUSDEV101:
+
+    https://github.com/DEVIOUSDEV101/file-beaver
+
+Thank you, DEVIOUSDEV101, for creating File Beaver and sharing it as open
+source. con/vert keeps everything File Beaver does with images and PDFs and
+adds audio and video: format conversion, tempo and key detection, and audio
+tools.
+
+Audio and video are handled by FFmpeg (LGPL 2.1), installed alongside the app.
+The licences of FFmpeg and every other component are in THIRD_PARTY_NOTICES.txt
+and ffmpeg-LICENSE.txt in the install folder.
+
+
+MIT License
+-----------
+
+Copyright (c) 2026 DEVIOUSDEV101 (File Beaver)
+Copyright (c) 2026 con/vert contributors (audio and video additions)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

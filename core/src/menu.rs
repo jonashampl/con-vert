@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(enabled(&m.pages[CONVERT_PAGE]), ["convert:mp3", "convert:wav", "convert:flac", "convert:m4a", "convert:ogg", "convert:opus", "convert:aac"]);
         // A video can be zipped or named by tempo and key; editing tools need audio.
         assert_eq!(enabled(&m.pages[TOOLS_PAGE]), ["tool:zip", "tool:bpmkey"]);
-        assert_eq!(enabled(&build(&["a.wav".into()], &Caps::ALL).pages[TOOLS_PAGE]).len(), 5);
+        assert_eq!(enabled(&build(&["a.wav".into()], &Caps::ALL).pages[TOOLS_PAGE]).len(), 4);
         // An MP3 isn't offered MP3; a mixed audio batch gets every target.
         assert!(!ids(&build(&["a.mp3".into()], &Caps::ALL).pages[CONVERT_PAGE]).contains(&"convert:mp3"));
         assert_eq!(build(&["a.mp3".into(), "b.wav".into()], &Caps::ALL).pages[CONVERT_PAGE].len(), 7);

@@ -218,11 +218,10 @@ pub fn run(paths: &[PathBuf], target: &str, out: &OutputDir, cancel: &AtomicBool
 }
 
 /// The audio tools ring, clockwise from the top: (id, label, icon, hint).
-pub const TOOLS: [(&str, &str, &str, &str); 5] = [
+pub const TOOLS: [(&str, &str, &str, &str); 4] = [
     ("zip", "Zip", "archive", "Pack them into one ZIP"),
     ("bpmkey", "BPM + Key", "gauge", "Copy named with BPM + key"),
     ("compress", "Compress", "compress", "Smaller file, same format"),
-    ("metadata", "Strip tags", "tag", "Copy with no tags or cover"),
     ("cover", "Cover", "image-down", "Save album art as JPG"),
 ];
 
@@ -263,8 +262,6 @@ fn tool_args(id: &str, input: &Path, output: &Path, ext: &str) -> Result<Vec<OsS
             a.extend(os(&["-map", "0:a:0", "-map_metadata", "0"]));
             a.extend(os(smaller(ext).1));
         }
-        // Stream copy: the sound is untouched, only the tags and embedded pictures go.
-        "metadata" => a.extend(os(&["-map", "0:a", "-map_metadata", "-1", "-c", "copy", "-fflags", "+bitexact", "-flags:a", "+bitexact"])),
         "cover" => a.extend(os(&["-map", "0:v:0", "-frames:v", "1", "-an", "-q:v", "2"])),
         other => bail!("{other} isn't an audio tool"),
     }
@@ -296,7 +293,6 @@ pub fn tool(id: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, p
                 let ext = own_target(src).context("this format can't be edited; convert it first")?;
                 let (out_ext, suffix) = match id {
                     "compress" => (smaller(ext).0, "Compressed"),
-                    "metadata" => (ext, "Clean"),
                     "cover" => ("jpg", "Cover"),
                     other => bail!("{other} isn't an audio tool"),
                 };
@@ -450,7 +446,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let run_tool = |id: &str, files: &[PathBuf]| tool(id, files, &OutputDir::Beside, &cancel, &mut |_| {});
 
-        for (id, want) in [("metadata", "Song Clean.mp3"), ("compress", "Song Compressed.mp3")] {
+        for (id, want) in [("compress", "Song Compressed.mp3")] {
             let o = run_tool(id, std::slice::from_ref(&mp3));
             assert!(o.errors.is_empty(), "{id}: {:?}", o.errors);
             assert_eq!(o.outputs[0].file_name().unwrap().to_string_lossy(), want, "{id}");

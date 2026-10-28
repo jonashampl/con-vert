@@ -124,7 +124,7 @@ pub fn run(action: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool
             Err(e) => Outcome::failed(format!("{e:#}")),
         };
     }
-    // Audio and video get the audio tools (same ids for compress and metadata).
+    // Audio and video get the audio tools (compress shares its id with the image one).
     if let Some(id) = action.strip_prefix("tool:") {
         if !paths.is_empty() && paths.iter().all(|p| crate::audio::is_media(p)) {
             return crate::audio::tool(id, paths, out, cancel, progress);

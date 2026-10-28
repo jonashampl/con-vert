@@ -22,3 +22,6 @@ metadata.json
 *.log
 Thumbs.db
 desktop.ini
+
+# Ready-to-share installer folders (built, not source)
+release/
