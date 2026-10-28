@@ -1,0 +1,178 @@
+/* Progress card shown beside the drop point, in File Beaver's frost / pond / lime.
+   Scoped to html.toast-root because all windows share one CSS bundle. */
+
+html.toast-root,
+html.toast-root body,
+html.toast-root #root {
+  background: transparent !important;
+  margin: 0;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+
+html.toast-root .card {
+  --ink: #13261b;
+  --muted: #557062;
+  --pond: #0e3b24;
+  --accent: #a6e43a;
+  box-sizing: border-box;
+  margin: 8px;
+  padding: 12px 14px 13px;
+  border-radius: 14px;
+  background: rgba(241, 246, 238, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 22px rgba(8, 40, 20, 0.28);
+  color: var(--ink);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  user-select: none;
+  animation: card-in 140ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+html.toast-root .head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+html.toast-root .badge {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--pond);
+  background: var(--accent);
+  flex: none;
+}
+
+html.toast-root .done .badge {
+  background: #2f6b3f;
+  color: #f1f6ee;
+}
+
+html.toast-root .error .badge {
+  background: #c8372d;
+  color: #fff;
+}
+
+html.toast-root .info .badge {
+  background: #557062;
+  color: #f1f6ee;
+}
+
+html.toast-root .spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+html.toast-root .title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html.toast-root .close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+html.toast-root .close:hover {
+  background: rgba(19, 38, 27, 0.1);
+  color: var(--ink);
+}
+
+html.toast-root .detail {
+  margin: 6px 0 0 30px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* While running, the detail ("2 of 5 file(s)") stays on one line. */
+html.toast-root .running .detail {
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+html.toast-root .queued {
+  color: var(--muted);
+}
+
+html.toast-root .bar {
+  height: 5px;
+  margin: 10px 0 0 30px;
+  border-radius: 3px;
+  background: rgba(19, 38, 27, 0.12);
+  overflow: hidden;
+}
+
+html.toast-root .bar > div {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 120ms ease-out;
+}
+
+html.toast-root .errors {
+  margin: 6px 0 0 30px;
+  color: #b03026;
+  font-size: 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+html.toast-root .reveal {
+  margin: 10px 0 0 30px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--pond);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+html.toast-root .reveal:focus-visible,
+html.toast-root .close:focus-visible {
+  outline: 2px solid var(--pond);
+  outline-offset: 2px;
+}
+
+html.toast-root .reveal:hover {
+  filter: brightness(1.08);
+}
