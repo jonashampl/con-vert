@@ -18,6 +18,8 @@ lopdf = { version = "0.34", default-features = false, features = ["nom_parser"] 
 zip = { version = "2", default-features = false, features = ["deflate"] }
 kamadak-exif = "0.6"
 oxipng = { version = "9", default-features = false, features = ["parallel"] }
+# Runs the Basic Pitch note model (core/models) for key detection; pure Rust, no DLL.
+tract-onnx = "0.23.9"
 
 [dev-dependencies]
 png = "0.17"

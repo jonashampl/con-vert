@@ -3,12 +3,12 @@
 //! sound is analysed: FFmpeg decodes up to four minutes to mono 22.05 kHz, then
 //! - tempo: spectral-flux onsets, autocorrelation, a comb over the beat period and its
 //!   multiples, kept in the 85-180 BPM range producers name tracks in (trap at 150, not 75);
-//! - key: a harmonic-only spectrogram (median-filter separation) down to 27 Hz (808s),
-//!   tuned, read as spectral peaks per semitone with overtones taken off, matched per 10 s
-//!   segment against three key profiles; major or minor from the 3rd, 6th and 7th,
-//!   Phrygian ("Dphy") from a clear flat 2nd.
+//! - key: the notes Spotify's Basic Pitch model hears (notes.rs) matched against three key
+//!   profiles; major or minor from the 3rd, 6th and 7th, Phrygian ("Dphy") from a clear
+//!   flat 2nd. When the model hears no notes, a harmonic-only spectrogram down to 27 Hz
+//!   (808s) stands in.
 //! Measured with examples/analyze_eval.rs on producer loops named with tempo and key:
-//! tempo ~85% exact, key ~55% exact (tonic right ~2/3).
+//! tempo ~85% exact, key ~57% exact (was ~52% from the spectrum alone).
 //! Either answer is dropped when the evidence is weak, so a guess never ends up in a name.
 
 use std::io::Read;
@@ -372,8 +372,19 @@ pub fn key(x: &[f32]) -> Option<Key> {
     key_scored(x).filter(|(_, m)| *m >= MIN_KEY_MARGIN).map(|(k, _)| k)
 }
 
-/// The likeliest key with how clearly major and minor differed.
+/// The likeliest key with how clearly major and minor differed: from the notes Basic
+/// Pitch hears, or from the spectrum when the model hears none.
 pub fn key_scored(x: &[f32]) -> Option<(Key, f32)> {
+    match crate::notes::chroma(x) {
+        // The model only answers when it hears notes, and the files a major/minor margin
+        // would drop are still right ~60% of the time, so no margin filter here.
+        Some(c) => decide(&key_scores(&c), &c).map(|(k, _)| (k, 1.0)),
+        None => spectrum_key(x),
+    }
+}
+
+/// Key from the harmonic spectrum alone (the method before the note model).
+fn spectrum_key(x: &[f32]) -> Option<(Key, f32)> {
     const SIZE: usize = 16384;
     const HOP: usize = 4096;
     let bin_hz = RATE / SIZE as f32;
@@ -477,6 +488,11 @@ pub fn key_scored(x: &[f32]) -> Option<(Key, f32)> {
     if !any {
         return None;
     }
+    decide(&total, &sum)
+}
+
+/// The key from profile scores over 24 keys and the pitch-class levels they came from.
+fn decide(total: &[f32; 24], sum: &[f32; 12]) -> Option<(Key, f32)> {
     // Tonic from the best-fitting key profile; major or minor from the notes that tell
     // them apart (3rd, 6th and 7th above the tonic). The profiles alone call minor
     // melodies major when they skip the third. Measured on 250 producer loops named with

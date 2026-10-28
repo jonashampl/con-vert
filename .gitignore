@@ -25,3 +25,4 @@ desktop.ini
 
 # Ready-to-share installer folders (built, not source)
 release/
+core/target-test/

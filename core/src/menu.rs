@@ -49,7 +49,8 @@ const TARGETS: [Format; 9] = [
 ];
 
 /// (id, label, icon, hint)
-const TOOLS: [(&str, &str, &str, &str); 7] = [
+const TOOLS: [(&str, &str, &str, &str); 8] = [
+    ("zip", "Zip", "archive", "Pack them into one ZIP"),
     ("compress", "Compress", "compress", "Smaller file, same look"),
     ("metadata", "Metadata", "tag", "Strip camera and GPS info"),
     ("edit", "Edit", "sliders", "Adjust light and colour"),
@@ -81,6 +82,9 @@ fn convert_page(formats: &[Option<Format>], caps: &Caps) -> Vec<Segment> {
 }
 
 fn tool_enabled(tool: &str, formats: &[Option<Format>], caps: &Caps) -> bool {
+    if tool == "zip" {
+        return !formats.is_empty();
+    }
     let Some(known) = formats.iter().copied().collect::<Option<Vec<Format>>>() else { return false };
     if known.is_empty() || !known.iter().all(|f| caps.can_read(*f)) {
         return false;
@@ -201,9 +205,9 @@ mod tests {
         let m = build(&["a.jpg".into()], &Caps::ALL);
         assert_eq!(
             ids(&m.pages[TOOLS_PAGE]),
-            ["tool:compress", "tool:metadata", "tool:edit", "tool:annotate", "tool:add_bg", "tool:crop", "tool:redact"]
+            ["tool:zip", "tool:compress", "tool:metadata", "tool:edit", "tool:annotate", "tool:add_bg", "tool:crop", "tool:redact"]
         );
-        assert_eq!(enabled(&m.pages[TOOLS_PAGE]).len(), 7);
+        assert_eq!(enabled(&m.pages[TOOLS_PAGE]).len(), 8);
     }
 
     #[test]
@@ -214,7 +218,7 @@ mod tests {
         assert!(ids(&m.pages[CONVERT_PAGE]).contains(&"convert:jpg"));
         assert_eq!(
             enabled(&m.pages[TOOLS_PAGE]),
-            ["tool:compress", "tool:metadata", "tool:annotate", "tool:crop", "tool:redact"]
+            ["tool:zip", "tool:compress", "tool:metadata", "tool:annotate", "tool:crop", "tool:redact"]
         );
     }
 
@@ -222,16 +226,16 @@ mod tests {
     fn mixed_batch_shows_all_formats_and_only_batch_tools() {
         let m = build(&["a.jpg".into(), "b.png".into()], &Caps::ALL);
         assert_eq!(m.pages[CONVERT_PAGE].len(), 9);
-        assert_eq!(enabled(&m.pages[TOOLS_PAGE]), ["tool:compress", "tool:metadata"]);
+        assert_eq!(enabled(&m.pages[TOOLS_PAGE]), ["tool:zip", "tool:compress", "tool:metadata"]);
         assert_eq!(m.title, "2 files");
     }
 
     #[test]
-    fn unsupported_file_starts_on_tools_with_everything_disabled() {
+    fn unsupported_file_starts_on_tools_with_only_zip() {
         let m = build(&["notes.txt".into()], &Caps::ALL);
         assert!(m.pages[CONVERT_PAGE].is_empty());
         assert_eq!(m.start_page, TOOLS_PAGE);
-        assert!(enabled(&m.pages[TOOLS_PAGE]).is_empty());
+        assert_eq!(enabled(&m.pages[TOOLS_PAGE]), ["tool:zip"]);
     }
 
     #[test]
@@ -240,10 +244,10 @@ mod tests {
         let m = build(&["a.png".into()], &no_heic);
         let heic = m.pages[CONVERT_PAGE].iter().find(|s| s.id == "convert:heic").unwrap();
         assert!(!heic.enabled);
-        // A HEIC file itself can't be opened at all.
+        // A HEIC file itself can't be opened at all; it can still be zipped.
         let m = build(&["IMG_0001.HEIC".into()], &no_heic);
         assert!(enabled(&m.pages[CONVERT_PAGE]).is_empty());
-        assert!(enabled(&m.pages[TOOLS_PAGE]).is_empty());
+        assert_eq!(enabled(&m.pages[TOOLS_PAGE]), ["tool:zip"]);
     }
 
     #[test]

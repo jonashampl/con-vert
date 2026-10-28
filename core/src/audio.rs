@@ -326,11 +326,11 @@ pub fn tool(id: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, p
 
 /// All the files, as they are, in one ZIP named after the folder they're in (or the file,
 /// for one).
-fn zip(paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, progress: &mut (dyn FnMut(Progress) + Send)) -> Outcome {
+pub(crate) fn zip(paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, progress: &mut (dyn FnMut(Progress) + Send)) -> Outcome {
     let Some(first) = paths.first() else { return Outcome::default() };
     let stem = match paths {
         [one] => naming::stem(one),
-        _ => first.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Audio".into()),
+        _ => first.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Files".into()),
     };
     match crate::actions::zip_into(paths, &naming::target_dir(first, out), &stem, cancel, progress) {
         Ok(p) => Outcome { summary: format!("Saved {} ({} file(s))", name(&p), paths.len()), outputs: vec![p], ..Default::default() },

@@ -131,6 +131,8 @@ pub fn run(action: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool
         }
     }
     match action {
+        // Any files at all: images, PDFs, a mix.
+        "tool:zip" => crate::audio::zip(paths, out, cancel, progress),
         "tool:compress" => per_file(paths, cancel, progress, |p| {
             let before = std::fs::metadata(p)?.len();
             match compress::compress(p)? {
@@ -259,4 +261,23 @@ fn per_file<T: Send>(
         }
     }
     PerFile(outcome, per)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zip_takes_images_and_pdfs() {
+        let dir = std::env::temp_dir().join(format!("convert-zip-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let files: Vec<PathBuf> = ["a.jpg", "b.pdf"].iter().map(|n| dir.join(n)).collect();
+        for f in &files {
+            std::fs::write(f, b"x").unwrap();
+        }
+        let o = run("tool:zip", &files, &OutputDir::Beside, &AtomicBool::new(false), &mut |_| {});
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        assert_eq!(o.outputs[0].extension().unwrap(), "zip");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
