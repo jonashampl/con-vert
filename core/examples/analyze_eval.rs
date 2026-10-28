@@ -1,5 +1,5 @@
 //! Measures BPM and key detection against files whose names state them
-//! ("Loop 140BPM G#Min.wav"). Reads only; prints misses, then accuracy against how many
+//! ("Loop 140BPM G#Min.wav", "Loop 146 Dphy.mp3"). Reads only; prints misses, then accuracy against how many
 //! files get an answer at several confidence thresholds.
 //! usage: CONVERT_FFMPEG=ffmpeg.exe cargo run --release --example analyze_eval -- <list.txt>
 //!        (one audio file path per line)
@@ -19,7 +19,7 @@ fn truth_bpm(name: &str) -> Option<u32> {
 /// Only keys written with an explicit quality ("min", "maj"), so words aren't misread.
 fn truth_key(name: &str) -> Option<Key> {
     let tokens: Vec<&str> = name.split(|c: char| !(c.is_ascii_alphanumeric() || c == '#')).filter(|t| !t.is_empty()).collect();
-    let explicit = |s: &str| ["min", "minor", "maj", "major"].iter().any(|q| s.to_ascii_lowercase().ends_with(q));
+    let explicit = |s: &str| ["min", "minor", "maj", "major", "phy"].iter().any(|q| s.to_ascii_lowercase().ends_with(q));
     for (i, t) in tokens.iter().enumerate() {
         if explicit(t) && t.len() <= 7 {
             if let Some(k) = analyze::parse_key(t) {

@@ -155,21 +155,6 @@ fn ffmpeg_run(ffmpeg: &Path, args: Vec<OsString>, cancel: &AtomicBool, on_fracti
     Ok(())
 }
 
-/// Length in seconds and sample rate, from FFmpeg's description of the file.
-pub fn probe(ffmpeg: &Path, path: &Path) -> (Option<f64>, Option<u32>) {
-    use std::os::windows::process::CommandExt;
-    let Ok(out) = Command::new(ffmpeg).args(["-hide_banner", "-nostdin", "-i"]).arg(path).stdin(Stdio::null()).creation_flags(0x0800_0000).output() else {
-        return (None, None);
-    };
-    let text = String::from_utf8_lossy(&out.stderr);
-    let duration = text.lines().find_map(parse_duration);
-    let rate = text
-        .lines()
-        .filter(|l| l.contains("Audio:"))
-        .find_map(|l| l.split(',').find_map(|part| part.trim().strip_suffix(" Hz")?.parse().ok()));
-    (duration, rate)
-}
-
 fn missing() -> Outcome {
     Outcome::failed("FFmpeg is missing from the app folder; reinstall con/vert".into())
 }
@@ -232,16 +217,13 @@ pub fn run(paths: &[PathBuf], target: &str, out: &OutputDir, cancel: &AtomicBool
     })
 }
 
-/// The audio tools ring, clockwise from the top: (id, label, icon).
-pub const TOOLS: [(&str, &str, &str); 8] = [
-    ("zip", "Zip", "archive"),
-    ("bpmkey", "BPM + Key", "gauge"),
-    ("loudness", "Loudness", "volume"),
-    ("trim", "Trim", "scissors"),
-    ("compress", "Compress", "compress"),
-    ("fade", "Fade", "waves"),
-    ("metadata", "Tags", "tag"),
-    ("cover", "Cover", "image-down"),
+/// The audio tools ring, clockwise from the top: (id, label, icon, hint).
+pub const TOOLS: [(&str, &str, &str, &str); 5] = [
+    ("zip", "Zip", "archive", "Pack them into one ZIP"),
+    ("bpmkey", "BPM + Key", "gauge", "Copy named with BPM + key"),
+    ("compress", "Compress", "compress", "Smaller file, same format"),
+    ("metadata", "Strip tags", "tag", "Copy with no tags or cover"),
+    ("cover", "Cover", "image-down", "Save album art as JPG"),
 ];
 
 /// Zip and BPM + Key take any audio or video; the rest re-encode, so they need files in
@@ -273,27 +255,10 @@ fn os(v: &[&str]) -> Vec<OsString> {
 }
 
 /// FFmpeg arguments for an audio tool writing `output` from `input`.
-fn tool_args(id: &str, input: &Path, output: &Path, ext: &str, duration: Option<f64>, rate: Option<u32>) -> Result<Vec<OsString>> {
+fn tool_args(id: &str, input: &Path, output: &Path, ext: &str) -> Result<Vec<OsString>> {
     let mut a = os(&["-hide_banner", "-nostdin", "-n", "-i"]);
     a.push(input.into());
-    let codec = TARGETS.iter().find(|t| t.0 == ext).map(|t| t.1).unwrap_or(&[]);
-    let filter = |a: &mut Vec<OsString>, af: String| {
-        a.extend(os(&["-map", "0:a:0", "-map_metadata", "0", "-af"]));
-        a.push(af.into());
-        a.extend(os(codec));
-    };
     match id {
-        // -14 LUFS integrated, -1.5 dB true peak: what streaming services play at.
-        "loudness" => filter(&mut a, format!("loudnorm=I=-14:TP=-1.5:LRA=11,aresample={}", rate.unwrap_or(44100))),
-        "trim" => {
-            let cut = "silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.05";
-            filter(&mut a, format!("{cut},areverse,{cut},areverse"))
-        }
-        "fade" => {
-            let len = duration.context("can't read how long this file is")?;
-            let d = (len / 4.0).min(2.0);
-            filter(&mut a, format!("afade=t=in:d={d:.2},afade=t=out:st={:.2}:d={d:.2}", len - d))
-        }
         "compress" => {
             a.extend(os(&["-map", "0:a:0", "-map_metadata", "0"]));
             a.extend(os(smaller(ext).1));
@@ -308,7 +273,7 @@ fn tool_args(id: &str, input: &Path, output: &Path, ext: &str, duration: Option<
     Ok(a)
 }
 
-/// Runs an audio tool ("loudness", "zip", ...) on the dropped files.
+/// Runs an audio tool ("compress", "zip", ...) on the dropped files.
 pub fn tool(id: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, progress: &mut (dyn FnMut(Progress) + Send)) -> Outcome {
     let Some(ff) = ffmpeg() else { return missing() };
     match id {
@@ -330,18 +295,14 @@ pub fn tool(id: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, p
             let mut o = one_by_one(paths, cancel, progress, |src, report| {
                 let ext = own_target(src).context("this format can't be edited; convert it first")?;
                 let (out_ext, suffix) = match id {
-                    "loudness" => (ext, "Normalized"),
-                    "trim" => (ext, "Trimmed"),
-                    "fade" => (ext, "Faded"),
                     "compress" => (smaller(ext).0, "Compressed"),
                     "metadata" => (ext, "Clean"),
                     "cover" => ("jpg", "Cover"),
                     other => bail!("{other} isn't an audio tool"),
                 };
-                let (duration, rate) = probe(&ff, src);
                 let stem = format!("{} {suffix}", naming::stem(src));
                 let saved = naming::write_new_with(&naming::target_dir(src, out), &stem, out_ext, |tmp| {
-                    ffmpeg_run(&ff, tool_args(id, src, tmp, ext, duration, rate)?, cancel, &mut |f| report(f, "")).map_err(|e| {
+                    ffmpeg_run(&ff, tool_args(id, src, tmp, ext)?, cancel, &mut |f| report(f, "")).map_err(|e| {
                         if id == "cover" && e.to_string() == "this file has no sound" { anyhow::anyhow!("this file has no cover art") } else { e }
                     })
                 })?;
@@ -488,16 +449,12 @@ mod tests {
         let wav = make("Take.wav", &[]);
         let cancel = AtomicBool::new(false);
         let run_tool = |id: &str, files: &[PathBuf]| tool(id, files, &OutputDir::Beside, &cancel, &mut |_| {});
-        let length = |p: &Path| probe(&ff, p).0.unwrap();
 
-        for (id, want) in [("loudness", "Song Normalized.mp3"), ("fade", "Song Faded.mp3"), ("metadata", "Song Clean.mp3"), ("compress", "Song Compressed.mp3")] {
+        for (id, want) in [("metadata", "Song Clean.mp3"), ("compress", "Song Compressed.mp3")] {
             let o = run_tool(id, std::slice::from_ref(&mp3));
             assert!(o.errors.is_empty(), "{id}: {:?}", o.errors);
             assert_eq!(o.outputs[0].file_name().unwrap().to_string_lossy(), want, "{id}");
         }
-        let trimmed = run_tool("trim", std::slice::from_ref(&wav));
-        assert!(trimmed.errors.is_empty(), "{:?}", trimmed.errors);
-        assert!(length(&trimmed.outputs[0]) < 3.3, "silence left: {}", length(&trimmed.outputs[0]));
         // WAV compresses to FLAC.
         let small = run_tool("compress", std::slice::from_ref(&wav));
         assert_eq!(small.outputs[0].extension().unwrap(), "flac");
@@ -512,7 +469,7 @@ mod tests {
         let mut names: Vec<&str> = archive.file_names().collect();
         names.sort();
         assert_eq!(names, ["Song.mp3", "Take.wav"]);
-        assert!(tool_enabled("loudness", &[mp3.as_path()]) && !tool_enabled("loudness", &[Path::new("clip.mp4")]));
+        assert!(tool_enabled("compress", &[mp3.as_path()]) && !tool_enabled("compress", &[Path::new("clip.mp4")]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

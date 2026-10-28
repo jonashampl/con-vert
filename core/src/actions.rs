@@ -61,9 +61,6 @@ pub fn title(action: &str) -> String {
         "tool:metadata" => "Removing metadata".into(),
         "tool:zip" => "Zipping".into(),
         "tool:bpmkey" => "Reading tempo and key".into(),
-        "tool:loudness" => "Matching loudness".into(),
-        "tool:trim" => "Trimming silence".into(),
-        "tool:fade" => "Adding fades".into(),
         "tool:cover" => "Saving the cover".into(),
         a => match target_label(a) {
             Some(f) => format!("Converting to {f}"),
@@ -86,9 +83,6 @@ pub fn done_title(action: &str, o: &Outcome) -> String {
         "tool:metadata" => "Metadata removed".into(),
         "tool:zip" => "Zipped".into(),
         "tool:bpmkey" => "Tempo and key added".into(),
-        "tool:loudness" => "Loudness matched".into(),
-        "tool:trim" => "Silence trimmed".into(),
-        "tool:fade" => "Fades added".into(),
         "tool:cover" => "Cover saved".into(),
         a => match target_label(a) {
             Some(f) => format!("Converted to {f}"),

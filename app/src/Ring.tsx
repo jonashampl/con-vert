@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Archive, Crop, EyeOff, Gauge, Image, ImageDown, PenLine, Scissors, Shrink, SlidersHorizontal, Tag, Volume2, Waves, type LucideIcon } from "lucide-react";
+import { Archive, Crop, EyeOff, Gauge, Image, ImageDown, PenLine, Shrink, SlidersHorizontal, Tag, type LucideIcon } from "lucide-react";
 import "./ring.css";
 
 // Geometry in logical px. Must match trigger.rs (WIN_LOGICAL, RING_R_LOGICAL)
@@ -15,7 +15,7 @@ const CORNER = 12;
 const GAP = 7;
 const PLACEHOLDER_SEGMENTS = 8;
 
-type Segment = { id: string; label: string; icon: string | null; enabled: boolean };
+type Segment = { id: string; label: string; icon: string | null; enabled: boolean; hint?: string };
 type Menu = { pages: [Segment[], Segment[]]; start_page: number; title: string; media: boolean };
 type RingEvent =
   | { type: "show"; backdrop: string | null; beaver: [number, number, number] | null }
@@ -38,9 +38,6 @@ const ICONS: Record<string, LucideIcon> = {
   "eye-off": EyeOff,
   archive: Archive,
   gauge: Gauge,
-  volume: Volume2,
-  scissors: Scissors,
-  waves: Waves,
   "image-down": ImageDown,
 };
 
@@ -253,7 +250,12 @@ export default function Ring() {
           </div>
         </foreignObject>
       )}
-      {menu && page === 0 && menu.title.endsWith("files") && (
+      {hovered?.enabled && hovered.hint ? (
+        // What the hovered action does, under its name; takes the Files / ZIP switch's place.
+        <foreignObject x={C - 0.25 * R} y={C + 0.1 * R} width={0.5 * R} height={0.2 * R}>
+          <div className="hint">{hovered.hint}</div>
+        </foreignObject>
+      ) : menu && page === 0 && menu.title.endsWith("files") && (
         // Same box as core geometry::on_zip_switch: |dx| <= 0.22 R, dy 0.10..0.24 R.
         <foreignObject x={C - 0.22 * R} y={C + 0.1 * R} width={0.44 * R} height={0.14 * R}>
           <div className="zip-switch" title="Save the results as one ZIP">

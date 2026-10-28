@@ -19,6 +19,8 @@ pub struct Segment {
     /// Icon key the ring UI maps to an icon; None for format labels.
     pub icon: Option<&'static str>,
     pub enabled: bool,
+    /// One short line shown in the hub while the petal is hovered.
+    pub hint: String,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -46,15 +48,15 @@ const TARGETS: [Format; 9] = [
     Format::Docx,
 ];
 
-/// (id, label, icon)
-const TOOLS: [(&str, &str, &str); 7] = [
-    ("compress", "Compress", "compress"),
-    ("metadata", "Metadata", "tag"),
-    ("edit", "Edit", "sliders"),
-    ("annotate", "Annotate", "pen"),
-    ("add_bg", "Add BG", "image"),
-    ("crop", "Crop", "crop"),
-    ("redact", "Redact", "eye-off"),
+/// (id, label, icon, hint)
+const TOOLS: [(&str, &str, &str, &str); 7] = [
+    ("compress", "Compress", "compress", "Smaller file, same look"),
+    ("metadata", "Metadata", "tag", "Strip camera and GPS info"),
+    ("edit", "Edit", "sliders", "Adjust light and colour"),
+    ("annotate", "Annotate", "pen", "Draw and write on it"),
+    ("add_bg", "Add BG", "image", "Put a colour behind it"),
+    ("crop", "Crop", "crop", "Cut it to size"),
+    ("redact", "Redact", "eye-off", "Black out private details"),
 ];
 
 fn convert_page(formats: &[Option<Format>], caps: &Caps) -> Vec<Segment> {
@@ -73,6 +75,7 @@ fn convert_page(formats: &[Option<Format>], caps: &Caps) -> Vec<Segment> {
             label: f.label(),
             icon: None,
             enabled: readable && caps.can_write(*f),
+            hint: format!("Save a copy as {}", f.label()),
         })
         .collect()
 }
@@ -101,18 +104,25 @@ fn audio_page(paths: &[String], caps: &Caps) -> Vec<Segment> {
     crate::audio::TARGETS
         .iter()
         .filter(|(id, _)| Some(*id) != skip)
-        .map(|(id, _)| Segment { id: format!("convert:{id}"), label: id.to_ascii_uppercase(), icon: None, enabled: caps.audio })
+        .map(|(id, _)| Segment {
+            id: format!("convert:{id}"),
+            label: id.to_ascii_uppercase(),
+            icon: None,
+            enabled: caps.audio,
+            hint: format!("{} copy, BPM + key in name", id.to_ascii_uppercase()),
+        })
         .collect()
 }
 
 fn tools_page(formats: &[Option<Format>], caps: &Caps) -> Vec<Segment> {
     TOOLS
         .iter()
-        .map(|(id, label, icon)| Segment {
+        .map(|(id, label, icon, hint)| Segment {
             id: format!("tool:{id}"),
             label: label.to_string(),
             icon: Some(icon),
             enabled: tool_enabled(id, formats, caps),
+            hint: hint.to_string(),
         })
         .collect()
 }
@@ -125,11 +135,12 @@ pub fn build(paths: &[String], caps: &Caps) -> Menu {
         let ps: Vec<&Path> = paths.iter().map(Path::new).collect();
         crate::audio::TOOLS
             .iter()
-            .map(|(id, label, icon)| Segment {
+            .map(|(id, label, icon, hint)| Segment {
                 id: format!("tool:{id}"),
                 label: label.to_string(),
                 icon: Some(icon),
                 enabled: caps.audio && crate::audio::tool_enabled(id, &ps),
+                hint: hint.to_string(),
             })
             .collect()
     } else {
@@ -255,7 +266,7 @@ mod tests {
         assert_eq!(enabled(&m.pages[CONVERT_PAGE]), ["convert:mp3", "convert:wav", "convert:flac", "convert:m4a", "convert:ogg", "convert:opus", "convert:aac"]);
         // A video can be zipped or named by tempo and key; editing tools need audio.
         assert_eq!(enabled(&m.pages[TOOLS_PAGE]), ["tool:zip", "tool:bpmkey"]);
-        assert_eq!(enabled(&build(&["a.wav".into()], &Caps::ALL).pages[TOOLS_PAGE]).len(), 8);
+        assert_eq!(enabled(&build(&["a.wav".into()], &Caps::ALL).pages[TOOLS_PAGE]).len(), 5);
         // An MP3 isn't offered MP3; a mixed audio batch gets every target.
         assert!(!ids(&build(&["a.mp3".into()], &Caps::ALL).pages[CONVERT_PAGE]).contains(&"convert:mp3"));
         assert_eq!(build(&["a.mp3".into(), "b.wav".into()], &Caps::ALL).pages[CONVERT_PAGE].len(), 7);

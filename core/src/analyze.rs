@@ -5,7 +5,8 @@
 //!   multiples, kept in the 85-180 BPM range producers name tracks in (trap at 150, not 75);
 //! - key: a harmonic-only spectrogram (median-filter separation) down to 27 Hz (808s),
 //!   tuned, read as spectral peaks per semitone with overtones taken off, matched per 10 s
-//!   segment against three key profiles; major or minor from the 3rd, 6th and 7th.
+//!   segment against three key profiles; major or minor from the 3rd, 6th and 7th,
+//!   Phrygian ("Dphy") from a clear flat 2nd.
 //! Measured with examples/analyze_eval.rs on producer loops named with tempo and key:
 //! tempo ~85% exact, key ~55% exact (tonic right ~2/3).
 //! Either answer is dropped when the evidence is weak, so a guess never ends up in a name.
@@ -23,16 +24,22 @@ const MAX_SECONDS: u32 = 240;
 pub struct Key {
     /// Pitch class of the tonic, 0 = C.
     pub tonic: u8,
+    /// Minor third above the tonic (natural minor, or Phrygian).
     pub minor: bool,
+    /// Minor with a flat second: trap and drill melodies use it a lot.
+    pub phrygian: bool,
 }
 
 const MAJOR_NAMES: [&str; 12] = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 const MINOR_NAMES: [&str; 12] = ["Cm", "C#m", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"];
+// The way producers write it ("Dphy", "DsPHY").
+const PHRYGIAN_NAMES: [&str; 12] = ["Cphy", "Csphy", "Dphy", "Dsphy", "Ephy", "Fphy", "Fsphy", "Gphy", "Gsphy", "Aphy", "Asphy", "Bphy"];
 
 impl Key {
-    /// "Am", "F#m", "Bb".
+    /// "Am", "F#m", "Bb", "Dphy".
     pub fn name(&self) -> &'static str {
-        if self.minor { MINOR_NAMES[self.tonic as usize % 12] } else { MAJOR_NAMES[self.tonic as usize % 12] }
+        let names = if self.phrygian { &PHRYGIAN_NAMES } else if self.minor { &MINOR_NAMES } else { &MAJOR_NAMES };
+        names[self.tonic as usize % 12]
     }
 }
 
@@ -45,7 +52,7 @@ pub fn parse_key(s: &str) -> Option<Key> {
         let minor = s.ends_with(['A', 'a']);
         let base = if minor { 8 } else { 3 }; // 1A = G#m (8), 1B = B (11): each step is a fifth (+7)
         let tonic = ((base as i32 + (n as i32 - 1) * 7 + if minor { 0 } else { 8 }) % 12) as u8;
-        return Some(Key { tonic, minor });
+        return Some(Key { tonic, minor, phrygian: false });
     }
     let mut chars = s.chars();
     let letter = chars.next()?.to_ascii_uppercase();
@@ -72,18 +79,20 @@ pub fn parse_key(s: &str) -> Option<Key> {
             }
         }
     }
-    Some(Key { tonic: tonic.rem_euclid(12) as u8, minor: quality(rest)? })
+    let (minor, phrygian) = quality(rest)?;
+    Some(Key { tonic: tonic.rem_euclid(12) as u8, minor, phrygian })
 }
 
-/// Some(true) for minor, Some(false) for major, None for anything else.
-fn quality(rest: &str) -> Option<bool> {
+/// (minor, phrygian) for a quality like "min", "maj" or "phy"; None for anything else.
+fn quality(rest: &str) -> Option<(bool, bool)> {
     let r = rest.trim_matches(|c: char| c == ' ' || c == '-' || c == '_');
     if r == "M" {
-        return Some(false);
+        return Some((false, false));
     }
     match r.to_ascii_lowercase().as_str() {
-        "" | "maj" | "major" | "dur" => Some(false),
-        "m" | "min" | "minor" | "moll" => Some(true),
+        "" | "maj" | "major" | "dur" => Some((false, false)),
+        "m" | "min" | "minor" | "moll" => Some((true, false)),
+        "phy" | "phry" | "phrygian" | "min phy" => Some((true, true)),
         _ => None,
     }
 }
@@ -348,6 +357,10 @@ fn key_scores(chroma: &[f32; 12]) -> [f32; 24] {
 const HARMONICS: [(usize, f32); 7] = [(12, 1.0), (19, 0.8), (24, 0.6), (28, 0.5), (31, 0.4), (34, 0.3), (36, 0.24)];
 /// How much more the minor-scale notes count when deciding major or minor.
 const MINOR_LEAN: f32 = 1.3;
+/// Phrygian when the flat second outweighs the natural one by this much...
+const PHRYGIAN_RATIO: f32 = 2.0;
+/// ...and is at least this share of the tonic triad's average level.
+const PHRYGIAN_SHARE: f32 = 0.2;
 
 fn median(v: &mut [f32]) -> f32 {
     let mid = v.len() / 2;
@@ -472,7 +485,11 @@ pub fn key_scored(x: &[f32]) -> Option<(Key, f32)> {
     let c = |i: usize| sum[(t + i) % 12];
     let (minor, major) = ((c(3) + c(8) + c(10)) * MINOR_LEAN, c(4) + c(9) + c(11));
     let margin = (minor - major).abs() / (minor + major).max(1e-9);
-    Some((Key { tonic: t as u8, minor: minor >= major }, margin))
+    // Phrygian: the flat second is played clearly and the natural second hardly at all
+    // (natural minor is the other way round). Measured on 29 Phrygian loops and 113 major
+    // or minor ones: 15 Phrygian named right (from none), 3 others lost to it.
+    let phrygian = c(1) > PHRYGIAN_RATIO * c(2) && c(1) > PHRYGIAN_SHARE * (c(0) + c(3) + c(7)) / 3.0;
+    Some((Key { tonic: t as u8, minor: minor >= major || phrygian, phrygian }, margin))
 }
 
 #[cfg(test)]
@@ -494,6 +511,10 @@ mod tests {
         assert_eq!(k("8B"), Some("C"));
         assert_eq!(k("1A"), Some("G#m"));
         assert_eq!(k("12B"), Some("E"));
+        assert_eq!(k("Dphy"), Some("Dphy"));
+        assert_eq!(k("DsPHY"), Some("Dsphy"));
+        assert_eq!(k("dbphy"), Some("Csphy"));
+        assert_eq!(k("C min phy"), Some("Cphy"));
         assert_eq!(k("hello"), None);
     }
 
@@ -576,5 +597,8 @@ mod tests {
         let fs_minor: Vec<Vec<f32>> = a_minor.iter().map(|ch| ch.iter().map(|m| m - 3.0 + 0.3).collect()).collect();
         let refs: Vec<&[f32]> = fs_minor.iter().map(|v| v.as_slice()).collect();
         assert_eq!(key(&song(100.0, &refs, 16)).map(|k| k.name()), Some("F#m"));
+        // E Phrygian, the trap move: Em to F (the flat second) and back.
+        let e_phrygian: [&[f32]; 4] = [&[40.0, 52.0, 55.0, 59.0], &[41.0, 53.0, 57.0, 60.0], &[40.0, 52.0, 55.0, 59.0], &[40.0, 52.0, 55.0, 59.0]];
+        assert_eq!(key(&song(140.0, &e_phrygian, 16)).map(|k| k.name()), Some("Ephy"));
     }
 }

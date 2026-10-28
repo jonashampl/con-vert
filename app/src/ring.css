@@ -208,6 +208,26 @@ html.ring-root #root {
   font-weight: 700;
 }
 
+/* What the hovered action does, small and quiet under the pill. */
+.hint {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  height: 100%;
+  font-size: 10px;
+  line-height: 1.25;
+  font-weight: 500;
+  text-align: center;
+  color: rgba(235, 235, 245, 0.86);
+  animation: hint-in 140ms ease-out;
+}
+
+@keyframes hint-in {
+  from {
+    opacity: 0;
+  }
+}
+
 /* Files / ZIP: a small segmented switch under the hub's label. */
 .zip-switch {
   box-sizing: border-box;
