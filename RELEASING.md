@@ -1,4 +1,4 @@
-# Releasing File Beaver
+# Releasing con/vert
 
 How to cut a release. Everything here runs on Windows from the repo root unless noted.
 
@@ -6,12 +6,11 @@ How to cut a release. Everything here runs on Windows from the repo root unless 
 
 | What | Where | Notes |
 |---|---|---|
-| Rust (GNU), MinGW, nasm | `rustup`, `scoop install mingw nasm` | See PLAN.md 3a. |
+| Rust (GNU), MinGW, nasm | `winget install Rustlang.Rustup BrechtSanders.WinLibs.POSIX.UCRT` | WinLibs includes nasm; put its `mingw64\bin` on PATH. |
 | Node 20+ | already installed | `npm install` in `app/`. |
 | FFmpeg (LGPL) | `app/src-tauri/binaries/ffmpeg-x86_64-pc-windows-gnu.exe` | Not in git. `bin/ffmpeg.exe` from BtbN's `ffmpeg-n9.0-latest-win64-lgpl-9.0.zip` (github.com/BtbN/FFmpeg-Builds, release 2026-10-27, SHA-256 `bac7c98811b44cbf3536f2fd8438851446f42b56e379125648212c9e98e3dc07`). Its licence is `licensing/ffmpeg-LICENSE.txt`. Core tests use it via `CONVERT_FFMPEG`. |
 | `cargo-about` | `cargo install cargo-about --locked --features cli` | Builds the licence notices. |
-| **Updater key** | `%USERPROFILE%\.shiftdrop-keys\updater.key` (+ `.pub`) | **Back it up** (password manager / offline). If it's lost, existing installs can never update again. The public key is in `tauri.conf.json > plugins.updater.pubkey`. |
-| Update feed URL | `tauri.conf.json > plugins.updater.endpoints` | Set to `DEVIOUSDEV101/file-beaver`. |
+| Updates | off | `plugins.updater.endpoints` is empty and `createUpdaterArtifacts` false: no updater key needed. To turn updates on, see File Beaver's original steps in git history (`89363cf`). |
 | Code signing | `app/src-tauri/sign.ps1` | Optional but recommended; see below. |
 
 ## Cutting a release
@@ -29,19 +28,17 @@ How to cut a release. Everything here runs on Windows from the repo root unless 
    A licence not on the allow-list (`about.toml`) fails here, on purpose.
 4. **Build** (in `app/`, PowerShell):
    ```
-   $env:TAURI_SIGNING_PRIVATE_KEY = "$env:USERPROFILE\.shiftdrop-keys\updater.key"
-   $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
-   $env:SHIFTDROP_SIGN = "cert"   # or "azure", or leave unset to skip code signing
+   $env:SHIFTDROP_SIGN = "cert"   # or "azure"
    npx tauri build
    ```
-   Output: `app/src-tauri/target/release/bundle/nsis/File Beaver_<version>_x64-setup.exe` and `.sig`.
-5. **Update feed:**
+   Without a certificate, skip the signing step (otherwise the bundler stops at
+   "SignTool not found"):
    ```
-   node scripts/make-latest-json.mjs https://github.com/DEVIOUSDEV101/file-beaver/releases/download/v<version> "What changed"
+   npx tauri build --config '{"bundle":{"windows":{"signCommand":null}}}'
    ```
-6. **Publish** a GitHub release tagged `v<version>` with three files: the `-setup.exe`,
-   its `.sig`, and `latest.json`. Installed copies find it within a day (or via Settings >
-   Check for updates).
+   Output: `app/src-tauri/target/release/bundle/nsis/con-vert_<version>_x64-setup.exe`.
+5. **Share** that one file. Unsigned, Windows SmartScreen shows "Windows protected your PC":
+   More info > Run anyway.
 
 ## Code signing options (checked October 2026)
 
@@ -66,9 +63,9 @@ dlib DLL) and `SHIFTDROP_AZURE_METADATA` (path to metadata.json).
 
 ## What the installer does
 
-- Per-user install (`%LOCALAPPDATA%\File Beaver`), no admin prompt; installs WebView2 if
+- Per-user install (`%LOCALAPPDATA%\con-vert`), no admin prompt; installs WebView2 if
   missing (silent bootstrapper).
 - Ships `THIRD_PARTY_NOTICES.txt` next to the app.
 - Uninstall removes the "launch at startup" entry (`installer-hooks.nsh`). Logs, settings
-  and crash reports in `%LOCALAPPDATA%\app.filebeaver.desktop` and `%APPDATA%\app.filebeaver.desktop`
+  and crash reports in `%LOCALAPPDATA%\app.convert.desktop` and `%APPDATA%\app.convert.desktop`
   are kept unless the user ticks "delete app data".
