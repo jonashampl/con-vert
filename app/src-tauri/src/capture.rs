@@ -119,14 +119,33 @@ unsafe fn render_desktop() -> Option<DesktopCache> {
     }
 }
 
+static RENDERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn refresh_desktop() {
+    if let Some(fresh) = unsafe { render_desktop() } {
+        *DESKTOP.lock().unwrap_or_else(|e| e.into_inner()) = Some(fresh);
+    }
+}
+
 /// The desktop under the screen rect at (x, y) of `w`x`h` physical pixels, as RGBA. The
 /// floating icon's glass uses this instead of a screen capture, so the icon shows up in
 /// screenshots and recordings without its glass feeding on its own pixels.
 pub fn desktop_rgba(x: i32, y: i32, w: i32, h: i32, fresh: bool) -> Option<Vec<u8>> {
-    let mut cache = DESKTOP.lock().unwrap_or_else(|e| e.into_inner());
-    if fresh || cache.as_ref().is_none_or(|c| c.at.elapsed() > DESKTOP_MAX_AGE) {
-        *cache = unsafe { render_desktop() }.or(cache.take());
+    let stale = DESKTOP.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|c| fresh || c.at.elapsed() > DESKTOP_MAX_AGE);
+    match stale {
+        // First time: draw it now (at startup, nothing is waiting on this thread yet).
+        None => refresh_desktop(),
+        // Later on a thread of its own: PrintWindow waits on Explorer, and the thread
+        // calling this also runs the drop target, which must never stall.
+        Some(true) if !RENDERING.swap(true, std::sync::atomic::Ordering::SeqCst) => {
+            std::thread::spawn(|| {
+                refresh_desktop();
+                RENDERING.store(false, std::sync::atomic::Ordering::SeqCst);
+            });
+        }
+        _ => {}
     }
+    let cache = DESKTOP.lock().unwrap_or_else(|e| e.into_inner());
     let c = cache.as_ref()?;
     let (cw, ch) = (c.rect.right - c.rect.left, c.rect.bottom - c.rect.top);
     let mut out = vec![0u8; (w * h * 4) as usize];

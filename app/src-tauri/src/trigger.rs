@@ -46,19 +46,17 @@ const WM_APP_FLIP: u32 = WM_APP + 3;
 const WM_APP_DRAG_WATCH: u32 = WM_APP + 4;
 /// The trigger key during a mouse drag: open the ring only once it turns out to be a file drag.
 const WM_APP_ARM: u32 = WM_APP + 5;
+/// Where the trigger key was tapped, while the invisible drop target waits there for Windows
+/// to bring it a file drag (only then is the ring drawn).
+static ARMED_AT: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 const TIMER_VERIFY: usize = 1;
 const TIMER_HIDE: usize = 2;
 const TIMER_DRAG_WATCH: usize = 3;
-const TIMER_ARM: usize = 4;
-/// How often, and how many times, to look for a file drag after the trigger key: the drag
-/// may still be starting when the key goes down together with the button.
-const ARM_MS: u32 = 30;
-const ARM_TRIES: u32 = 20;
 /// While the button is down after a drag starts, how often to check for a file drag, and
 /// how many checks after letting go before the beaver goes back down (the drop lands first).
 const DRAG_WATCH_MS: u32 = 60;
 const DRAG_WATCH_TAIL: u32 = 5;
-const VERIFY_MS: u32 = 800;
+const VERIFY_MS: u32 = 2000;
 
 /// Which key combination opens the ring.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -115,7 +113,6 @@ static BUTTON_DOWN: AtomicBool = AtomicBool::new(false);
 static DRAGGING: AtomicBool = AtomicBool::new(false);
 /// Drag-watch ticks since the button went up.
 static DRAG_TAIL: AtomicU32 = AtomicU32::new(0);
-static ARM_COUNT: AtomicU32 = AtomicU32::new(0);
 /// When either hook last heard anything (the event's tick count).
 static LAST_HOOK_TICK: AtomicU32 = AtomicU32::new(0);
 const HOOK_CHECK_MS: u32 = 10_000;
@@ -193,7 +190,9 @@ pub fn show_no_activate(hwnd: isize) {
 /// onto it opens the ring without Shift). Ignored while disabled or already open.
 pub(crate) fn open_ring_at(x: i32, y: i32) {
     log::info!("beaver: file arrived (enabled={}, ring open={})", ENABLED.load(SeqCst), SHOWN.load(SeqCst));
-    if ENABLED.load(SeqCst) && !SHOWN.swap(true, SeqCst) {
+    // A ring only armed by the trigger key (waiting for the drag) gives way to the icon.
+    let armed = ARMED_AT.lock().unwrap_or_else(|e| e.into_inner()).take().is_some();
+    if ENABLED.load(SeqCst) && (!SHOWN.swap(true, SeqCst) || armed) {
         FROM_BEAVER.store(true, SeqCst);
         post(WM_APP_SHOW, x as usize, y as isize);
     }
@@ -343,8 +342,9 @@ unsafe fn mouse_hook_body(code: i32, wparam: WPARAM, lparam: LPARAM) {
                 BUTTON_DOWN.store(false, SeqCst);
                 DRAGGING.store(false, SeqCst);
                 if SHOWN.load(SeqCst) && !CLICK_MODE.load(SeqCst) {
-                    // give OLE time to deliver Drop before we hide
-                    post(WM_APP_HIDE, 250, 0);
+                    // give OLE time to deliver Drop before we hide (at once if no file came:
+                    // the invisible drop target must not catch the next click)
+                    post(WM_APP_HIDE, if FILE_DRAG.load(SeqCst) || FROM_BEAVER.load(SeqCst) { 250 } else { 1 }, 0);
                 }
             }
             WM_MOUSEMOVE if BUTTON_DOWN.load(SeqCst) && !DRAGGING.load(SeqCst) => {
@@ -513,6 +513,10 @@ impl DropTarget_Impl {
             post(WM_APP_HIDE, 0, 0);
             return Ok(());
         }
+        // Armed by the trigger key: now that it's a file drag, draw the ring.
+        if let Some((x, y)) = ARMED_AT.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            unsafe { show_at(x, y, true) };
+        }
         FILE_DRAG.store(true, SeqCst);
         *self.data.borrow_mut() = obj.cloned();
         *self.described.borrow_mut() = None;
@@ -637,8 +641,9 @@ fn refuse(effect: *mut DROPEFFECT) -> Result<()> {
 
 // ---------- showing and hiding ----------
 
-/// Positions both windows on the cursor's monitor, sized for its DPI.
-unsafe fn show_at(x: i32, y: i32) {
+/// Positions both windows on the cursor's monitor, sized for its DPI. With `reveal` false
+/// only the invisible drop target goes there (see WM_APP_ARM).
+unsafe fn show_at(x: i32, y: i32, reveal: bool) {
     unsafe {
         let mon = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
         let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
@@ -662,13 +667,15 @@ unsafe fn show_at(x: i32, y: i32) {
         PAGE.store(0, SeqCst);
         *menu_lock() = None;
 
-        // Capture before either window is visible.
-        let backdrop = capture::backdrop(cx - r, cy - r, 2 * r, 2 * r);
         let (left, top) = (cx - win / 2, cy - win / 2);
-        let beaver = crate::beaver::visible_rect().filter(|_| FROM_BEAVER.load(SeqCst)).map(|(l, t, rt, b)| {
-            (((l + rt) / 2 - left) as f64 / scale, ((t + b) / 2 - top) as f64 / scale, (rt - l) as f64 / scale / 2.0)
-        });
-        emit(RingEvent::Show { backdrop, beaver });
+        if reveal {
+            // Capture before the ring is visible.
+            let backdrop = capture::backdrop(cx - r, cy - r, 2 * r, 2 * r);
+            let beaver = crate::beaver::visible_rect().filter(|_| FROM_BEAVER.load(SeqCst)).map(|(l, t, rt, b)| {
+                (((l + rt) / 2 - left) as f64 / scale, ((t + b) / 2 - top) as f64 / scale, (rt - l) as f64 / scale / 2.0)
+            });
+            emit(RingEvent::Show { backdrop, beaver });
+        }
 
         let flags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
 
@@ -682,11 +689,13 @@ unsafe fn show_at(x: i32, y: i32) {
         // thread, so this is asynchronous: if the main thread is busy we don't wait
         // (a stalled trigger thread made Windows drop key events). Inserting it under
         // the drop target keeps the order right whenever it lands.
-        let ring = ring_window();
-        let flags = flags | SWP_ASYNCWINDOWPOS;
-        let _ = SetWindowPos(ring, drop, left, top, win, win, flags);
-        // Crossing onto a monitor with another DPI may resize it; put the size back.
-        let _ = SetWindowPos(ring, drop, left, top, win, win, flags);
+        if reveal {
+            let ring = ring_window();
+            let flags = flags | SWP_ASYNCWINDOWPOS;
+            let _ = SetWindowPos(ring, drop, left, top, win, win, flags);
+            // Crossing onto a monitor with another DPI may resize it; put the size back.
+            let _ = SetWindowPos(ring, drop, left, top, win, win, flags);
+        }
 
         // Windows looks for the window under a drag only when the mouse moves: nudge it so
         // the ring takes the drag at once, even with the cursor held still over the icon.
@@ -700,12 +709,12 @@ unsafe fn show_at(x: i32, y: i32) {
     }
 }
 
-/// A zero-distance mouse move: makes a running drag-and-drop look at the window under the
-/// cursor again (the ring that just opened there).
+/// A one-pixel move there and back: makes a running drag-and-drop look at the window under
+/// the cursor again (the ring that just opened there). Explorer ignores a zero-distance move.
 fn nudge_cursor() {
-    let input = INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dwFlags: MOUSEEVENTF_MOVE, ..Default::default() } } };
+    let step = |dx: i32| INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dx, dwFlags: MOUSEEVENTF_MOVE, ..Default::default() } } };
     unsafe {
-        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+        SendInput(&[step(1), step(-1)], std::mem::size_of::<INPUT>() as i32);
     }
 }
 
@@ -726,7 +735,6 @@ fn flip_page() {
 fn hide() {
     unsafe {
         let _ = KillTimer(overlay(), TIMER_VERIFY);
-        let _ = KillTimer(overlay(), TIMER_ARM);
         let _ = ShowWindow(overlay(), SW_HIDE);
         let _ = ShowWindowAsync(ring_window(), SW_HIDE);
     }
@@ -736,6 +744,7 @@ fn hide() {
     FILE_DRAG.store(false, SeqCst);
     FROM_BEAVER.store(false, SeqCst);
     CLICK_MODE.store(false, SeqCst);
+    *ARMED_AT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     PENDING.lock().unwrap_or_else(|e| e.into_inner()).clear();
     HOVER.store(-1, SeqCst);
     *menu_lock() = None;
@@ -764,7 +773,21 @@ fn file_drag_under_way() -> bool {
         String::from_utf16_lossy(&name[..n]) == "CLIPBRDWNDCLASS"
     };
     let down = DOWN_THREAD.load(SeqCst);
-    (down != 0 && captured_by_ole(down)) || captured_by_ole(0)
+    if (down != 0 && captured_by_ole(down)) || captured_by_ole(0) {
+        return true;
+    }
+    // Explorer on Windows 11 runs the drag on a thread of its own, neither of those: look
+    // at every thread with an OLE clipboard window (message-only windows).
+    let mut after = HWND::default();
+    unsafe {
+        while let Ok(w) = FindWindowExW(HWND_MESSAGE, after, w!("CLIPBRDWNDCLASS"), None) {
+            if captured_by_ole(GetWindowThreadProcessId(w, None)) {
+                return true;
+            }
+            after = w;
+        }
+    }
+    false
 }
 
 /// A click on the open ring in click mode: run the petal, or flip pages on the hub.
@@ -799,27 +822,17 @@ unsafe fn wndproc_body(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
     unsafe {
         match msg {
             WM_APP_SHOW => {
-                show_at(wparam.0 as i32, lparam.0 as i32);
-                LRESULT(0)
-            }
-            WM_APP_ARM => {
-                ARM_COUNT.store(0, SeqCst);
-                SetTimer(hwnd, TIMER_ARM, ARM_MS, None);
+                show_at(wparam.0 as i32, lparam.0 as i32, true);
                 LRESULT(0)
             }
             // Only a file drag opens the ring: Shift while moving notes in FL Studio, a
-            // window or a text selection must not.
-            WM_TIMER if wparam.0 == TIMER_ARM => {
-                if file_drag_under_way() {
-                    let _ = KillTimer(hwnd, TIMER_ARM);
-                    let mut pt = POINT::default();
-                    let _ = GetCursorPos(&mut pt);
-                    show_at(pt.x, pt.y);
-                } else if !BUTTON_DOWN.load(SeqCst) || ARM_COUNT.fetch_add(1, SeqCst) >= ARM_TRIES {
-                    let _ = KillTimer(hwnd, TIMER_ARM);
-                    SHOWN.store(false, SeqCst);
-                    log::info!("trigger key during a drag that isn't a file drag, ring not shown");
-                }
+            // window or a text selection must not. The invisible drop target goes under the
+            // cursor first; the ring is drawn when Windows hands it a file drag (DragEnter).
+            WM_APP_ARM => {
+                let mut pt = POINT::default();
+                let _ = GetCursorPos(&mut pt);
+                *ARMED_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some((pt.x, pt.y));
+                show_at(pt.x, pt.y, false);
                 LRESULT(0)
             }
             WM_APP_DRAG_WATCH => {
@@ -863,7 +876,7 @@ unsafe fn wndproc_body(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             WM_TIMER => {
                 let _ = KillTimer(hwnd, wparam.0);
                 if wparam.0 == TIMER_VERIFY && !FILE_DRAG.load(SeqCst) {
-                    log::info!("no file drag arrived, hiding ring");
+                    log::info!("trigger key during a drag that isn't a file drag, ring not shown");
                     hide();
                 } else if wparam.0 == TIMER_HIDE {
                     hide();
@@ -942,6 +955,7 @@ unsafe fn run() -> Result<()> {
                 };
                 let (ok, mut hooks, install) = installed;
                 let _ = hooks_ready.0.send(ok);
+                LAST_HOOK_TICK.store(windows::Win32::System::SystemInformation::GetTickCount(), SeqCst);
                 // Windows silently removes a low-level hook that keeps answering late (a slow
                 // moment on a long-running PC), and the ring would stop opening until a
                 // restart. Every few seconds, check the mouse hook still hears the mouse and

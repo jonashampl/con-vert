@@ -179,8 +179,9 @@ pub fn name_has(stem: &str) -> (bool, bool) {
     // ...or any key right after the tempo: "124 BPM C", "124 BPM Am".
     let after_bpm = |i: usize| is_bpm(&lower[i]) && tokens.get(i + 1).is_some_and(|t| parse_key(t).is_some());
     let has_key = (0..tokens.len()).any(|i| spelled(tokens[i]) || after_bpm(i));
-    // A bare tempo counts only beside a key: "SCH 146 Dphy", not "Track 101".
-    let bare_tempo = has_key && lower.iter().any(|t| t.parse::<u32>().is_ok_and(|n| (60..=200).contains(&n)));
+    // A bare tempo counts only right next to a spelled key: "SCH 146 Dphy", not "Track 101".
+    let number = |i: usize| lower[i].parse::<u32>().is_ok_and(|n| (60..=200).contains(&n));
+    let bare_tempo = (0..tokens.len()).any(|i| number(i) && ((i > 0 && spelled(tokens[i - 1])) || tokens.get(i + 1).is_some_and(|t| spelled(t))));
     (lower.iter().any(|t| is_bpm(t)) || bare_tempo, has_key)
 }
 
@@ -639,6 +640,7 @@ mod tests {
         // A number alone is not a tempo, a common word is not a key.
         assert_eq!(tagged_stem("Track 101", Some(120), parse_key("Am")), "Track 101 120 BPM Am");
         assert_eq!(tagged_stem("I Am Here", Some(120), parse_key("Dm")), "I Am Here 120 BPM Dm");
+        assert_eq!(tagged_stem("Track 101 x Amin", Some(140), parse_key("Am")), "Track 101 x Amin 140 BPM");
     }
 
     /// A rich tone (decaying harmonics) at `midi`, `secs` long, added into `out` at `start`.
