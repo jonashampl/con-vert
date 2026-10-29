@@ -95,7 +95,7 @@ fn center(r: RECT) -> (i32, i32) {
 }
 
 fn beaver() -> HWND {
-    unsafe { FindWindowW(w!("FileBeaverWidget"), None).expect("beaver window not found (is the app running?)") }
+    unsafe { FindWindowW(w!("ConvertWidget"), None).expect("beaver window not found (is the app running?)") }
 }
 
 unsafe extern "system" fn pad_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -139,10 +139,10 @@ fn main() -> Result<()> {
         std::thread::spawn(move || {
             sleep(Duration::from_millis(200));
             glide(start, target);
-            // Wait for the ring ("File Beaver menu") to appear around the beaver.
+            // Wait for the ring ("con/vert menu") to appear around the beaver.
             let t0 = Instant::now();
             let ring = loop {
-                if let Ok(h) = FindWindowW(None, w!("File Beaver menu")) {
+                if let Ok(h) = FindWindowW(None, w!("con/vert menu")) {
                     if IsWindowVisible(h).as_bool() {
                         break Some(h);
                     }
@@ -191,7 +191,7 @@ fn main() -> Result<()> {
         let _ = DestroyWindow(pad);
         if click_mode {
             sleep(Duration::from_millis(700));
-            let ring = FindWindowW(None, w!("File Beaver menu")).ok().filter(|h| IsWindowVisible(*h).as_bool());
+            let ring = FindWindowW(None, w!("con/vert menu")).ok().filter(|h| IsWindowVisible(*h).as_bool());
             println!("ring still open after dropping on the beaver: {}", ring.is_some());
             let Some(ring) = ring else { return Ok(()) };
             let rr = rect_of(ring);

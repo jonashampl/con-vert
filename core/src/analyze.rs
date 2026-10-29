@@ -3,12 +3,13 @@
 //! sound is analysed: FFmpeg decodes up to four minutes to mono 22.05 kHz, then
 //! - tempo: spectral-flux onsets, autocorrelation, a comb over the beat period and its
 //!   multiples, kept in the 85-180 BPM range producers name tracks in (trap at 150, not 75);
+//!   for loops, the whole-bar tempo their length implies, when the beat fits it;
 //! - key: the notes Spotify's Basic Pitch model hears (notes.rs) matched against three key
 //!   profiles; major or minor from the 3rd, 6th and 7th, Phrygian ("Dphy") from a clear
 //!   flat 2nd. When the model hears no notes, a harmonic-only spectrogram down to 27 Hz
 //!   (808s) stands in.
 //! Measured with examples/analyze_eval.rs on producer loops named with tempo and key:
-//! tempo ~85% exact, key ~57% exact (was ~52% from the spectrum alone).
+//! tempo ~85% exact (1003 loops), key ~57% exact (was ~52% from the spectrum alone).
 //! Either answer is dropped when the evidence is weak, so a guess never ends up in a name.
 
 use std::io::Read;
@@ -30,13 +31,14 @@ pub struct Key {
     pub phrygian: bool,
 }
 
-const MAJOR_NAMES: [&str; 12] = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+// "maj" spelled out: a bare "C" in a file name reads as if the scale were missing.
+const MAJOR_NAMES: [&str; 12] = ["Cmaj", "Dbmaj", "Dmaj", "Ebmaj", "Emaj", "Fmaj", "F#maj", "Gmaj", "Abmaj", "Amaj", "Bbmaj", "Bmaj"];
 const MINOR_NAMES: [&str; 12] = ["Cm", "C#m", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"];
 // The way producers write it ("Dphy", "DsPHY").
 const PHRYGIAN_NAMES: [&str; 12] = ["Cphy", "Csphy", "Dphy", "Dsphy", "Ephy", "Fphy", "Fsphy", "Gphy", "Gsphy", "Aphy", "Asphy", "Bphy"];
 
 impl Key {
-    /// "Am", "F#m", "Bb", "Dphy".
+    /// "Am", "F#m", "Bbmaj", "Dphy".
     pub fn name(&self) -> &'static str {
         let names = if self.phrygian { &PHRYGIAN_NAMES } else if self.minor { &MINOR_NAMES } else { &MAJOR_NAMES };
         names[self.tonic as usize % 12]
@@ -149,16 +151,37 @@ pub fn decode(ffmpeg: &Path, path: &Path) -> Result<(Vec<f32>, (Option<u32>, Opt
 
 /// "Song" -> "Song 124 BPM Am"; leaves out what's unknown or already in the name.
 pub fn tagged_stem(stem: &str, bpm: Option<u32>, key: Option<Key>) -> String {
-    let lower = stem.to_ascii_lowercase();
+    let (has_bpm, has_key) = name_has(stem);
     let mut out = stem.to_string();
-    if let Some(b) = bpm.filter(|_| !lower.contains("bpm")) {
+    if let Some(b) = bpm.filter(|_| !has_bpm) {
         out.push_str(&format!(" {b} BPM"));
     }
-    if let Some(k) = key.filter(|_| !lower.contains("bpm") || bpm.is_some()) {
+    if let Some(k) = key.filter(|_| !has_key) {
         out.push(' ');
         out.push_str(k.name());
     }
     out
+}
+
+/// Whether a file name already states its tempo and its key, as (tempo, key). Understands
+/// our own "Song 124 BPM Am" (a converted file converted again) and producer names like
+/// "Loop 146 Dphy" or "Melody 140BPM G#Min".
+pub fn name_has(stem: &str) -> (bool, bool) {
+    let tokens: Vec<&str> = stem.split(|c: char| !(c.is_ascii_alphanumeric() || c == '#')).filter(|t| !t.is_empty()).collect();
+    let lower: Vec<String> = tokens.iter().map(|t| t.to_ascii_lowercase()).collect();
+    let is_bpm = |t: &str| t == "bpm" || (t.ends_with("bpm") && t[..t.len() - 3].chars().all(|c| c.is_ascii_digit()));
+    // A key with its quality written out ("Am" is too common a word to count on its own)...
+    let spelled = |t: &str| {
+        t.len() <= 9
+            && ["min", "minor", "maj", "major", "phy", "phry", "moll", "dur"].iter().any(|q| t.to_ascii_lowercase().ends_with(q))
+            && parse_key(t).is_some()
+    };
+    // ...or any key right after the tempo: "124 BPM C", "124 BPM Am".
+    let after_bpm = |i: usize| is_bpm(&lower[i]) && tokens.get(i + 1).is_some_and(|t| parse_key(t).is_some());
+    let has_key = (0..tokens.len()).any(|i| spelled(tokens[i]) || after_bpm(i));
+    // A bare tempo counts only beside a key: "SCH 146 Dphy", not "Track 101".
+    let bare_tempo = has_key && lower.iter().any(|t| t.parse::<u32>().is_ok_and(|n| (60..=200).contains(&n)));
+    (lower.iter().any(|t| is_bpm(t)) || bare_tempo, has_key)
 }
 
 // ---------- spectra ----------
@@ -231,53 +254,71 @@ pub fn tempo(x: &[f32]) -> Option<u32> {
     tempo_scored(x).filter(|(_, c)| *c >= MIN_TEMPO_CONFIDENCE).map(|(b, _)| b)
 }
 
-/// The likeliest tempo with its confidence (winning score over the range's mean).
-pub fn tempo_scored(x: &[f32]) -> Option<(u32, f32)> {
-    const HOP: usize = 256;
-    let fps = RATE / HOP as f32;
-    let spec = spectrogram(x, 1024, HOP, 372); // up to 8 kHz
-    if spec.len() < (fps * 4.0) as usize {
-        return None;
-    }
-    // Onset strength: rise in log magnitude, summed over bins.
-    let logs: Vec<Vec<f32>> = spec.iter().map(|f| f.iter().map(|m| (1.0 + 100.0 * m).ln()).collect()).collect();
-    let mut onset: Vec<f32> = std::iter::once(0.0)
-        .chain(logs.windows(2).map(|w| w[1].iter().zip(&w[0]).map(|(b, a)| (b - a).max(0.0)).sum()))
-        .collect();
-    // Remove the slow trend so only the pulses remain.
-    let half = (fps * 0.25) as usize;
-    let smooth: Vec<f32> = (0..onset.len())
-        .map(|i| {
-            let (a, b) = (i.saturating_sub(half), (i + half + 1).min(onset.len()));
-            onset[a..b].iter().sum::<f32>() / (b - a) as f32
-        })
-        .collect();
-    for (o, s) in onset.iter_mut().zip(&smooth) {
-        *o = (*o - s).max(0.0);
+/// Frames per second of the onset curve [`Pulse`] works on.
+pub const PULSE_FPS: f32 = RATE / 256.0;
+
+/// How strongly the onsets repeat at every lag (autocorrelation, in onset frames).
+pub struct Pulse {
+    acf: Vec<f32>,
+}
+
+impl Pulse {
+    /// Spectral-flux onsets of `x`, autocorrelated up to 4 beats at 40 BPM.
+    pub fn of(x: &[f32]) -> Option<Self> {
+        const HOP: usize = 256;
+        let fps = PULSE_FPS;
+        let spec = spectrogram(x, 1024, HOP, 372); // up to 8 kHz
+        if spec.len() < (fps * 4.0) as usize {
+            return None;
+        }
+        // Onset strength: rise in log magnitude, summed over bins.
+        let logs: Vec<Vec<f32>> = spec.iter().map(|f| f.iter().map(|m| (1.0 + 100.0 * m).ln()).collect()).collect();
+        let mut onset: Vec<f32> = std::iter::once(0.0)
+            .chain(logs.windows(2).map(|w| w[1].iter().zip(&w[0]).map(|(b, a)| (b - a).max(0.0)).sum()))
+            .collect();
+        // Remove the slow trend so only the pulses remain.
+        let half = (fps * 0.25) as usize;
+        let smooth: Vec<f32> = (0..onset.len())
+            .map(|i| {
+                let (a, b) = (i.saturating_sub(half), (i + half + 1).min(onset.len()));
+                onset[a..b].iter().sum::<f32>() / (b - a) as f32
+            })
+            .collect();
+        for (o, s) in onset.iter_mut().zip(&smooth) {
+            *o = (*o - s).max(0.0);
+        }
+
+        // Autocorrelation up to 4 beats at the slowest tempo searched.
+        let max_lag = (60.0 * fps / 40.0 * 4.0) as usize + 2;
+        let n = onset.len();
+        let acf: Vec<f32> = (0..max_lag.min(n)).map(|l| onset[..n - l].iter().zip(&onset[l..]).map(|(a, b)| a * b).sum()).collect();
+        (acf.first().copied().unwrap_or(0.0) > 0.0).then_some(Pulse { acf })
     }
 
-    // Autocorrelation up to 4 beats at the slowest tempo searched.
-    let max_lag = (60.0 * fps / 40.0 * 4.0) as usize + 2;
-    let n = onset.len();
-    let acf: Vec<f32> = (0..max_lag.min(n)).map(|l| onset[..n - l].iter().zip(&onset[l..]).map(|(a, b)| a * b).sum()).collect();
-    if acf[0] <= 0.0 {
-        return None;
-    }
-    let at = |lag: f32| -> f32 {
+    fn at(&self, lag: f32) -> f32 {
         let i = lag.floor() as usize;
-        if i + 1 >= acf.len() {
+        if i + 1 >= self.acf.len() {
             return 0.0;
         }
         let f = lag - i as f32;
-        acf[i] * (1.0 - f) + acf[i + 1] * f
-    };
-    let comb = |bpm: f32, beats: usize| -> f32 {
-        let period = 60.0 * fps / bpm;
-        (1..=beats).map(|k| at(period * k as f32)).sum::<f32>() / beats as f32
-    };
+        self.acf[i] * (1.0 - f) + self.acf[i + 1] * f
+    }
+
+    /// How well a beat at `bpm` fits, averaged over its first `beats` multiples.
+    pub fn comb(&self, bpm: f32, beats: usize) -> f32 {
+        let period = 60.0 * PULSE_FPS / bpm;
+        (1..=beats).map(|k| self.at(period * k as f32)).sum::<f32>() / beats as f32
+    }
+}
+
+/// The likeliest tempo with its confidence (winning score over the range's mean).
+pub fn tempo_scored(x: &[f32]) -> Option<(u32, f32)> {
+    let pulse = Pulse::of(x)?;
+    let comb = |bpm: f32, beats: usize| pulse.comb(bpm, beats);
 
     // Coarse search in the named range, a mild preference for ~130 breaks octave ties.
-    let score = |b: f32| comb(b, 4) * (1.0 - 0.15 * ((b / 140.0).log2()).powi(2));
+    let prior = |b: f32| 1.0 - 0.15 * ((b / 140.0).log2()).powi(2);
+    let score = |b: f32| comb(b, 4) * prior(b);
     let (mut best, mut best_score) = (0.0f32, f32::MIN);
     let mut total = 0.0;
     let mut count = 0.0;
@@ -305,8 +346,45 @@ pub fn tempo_scored(x: &[f32]) -> Option<(u32, f32)> {
         }
         b += 0.02;
     }
-    Some((fine.round() as u32, confidence))
+    Some((loop_tempo(x.len() as f32 / RATE, fine, fine_score, &pulse, prior).unwrap_or(fine.round() as u32), confidence))
 }
+
+/// Loops are cut to a whole number of bars, so their length gives the tempo exactly: of the
+/// tempos that fit the length, the one whose beat fits the onsets nearly as well as the best
+/// found (`found`, scoring `found_score` on 16 beats). Rules out triplet-feel 2/3 tempos and
+/// off-by-one roundings. Measured on 1003 producer loops named with their tempo: 77% -> 85%
+/// exact; songs and loops that aren't whole bars come out as before.
+fn loop_tempo(secs: f32, found: f32, found_score: f32, pulse: &Pulse, prior: impl Fn(f32) -> f32) -> Option<u32> {
+    if !(2.0..=LOOP_MAX_SECS).contains(&secs) || found_score <= 0.0 {
+        return None;
+    }
+    let mut pick: Option<(f32, f32)> = None;
+    for bars in 1..=64u32 {
+        let tempo = 240.0 * bars as f32 / secs;
+        // Half or double time stays the coarse search's call (its ~130 preference): the
+        // length can't tell 90 from 180, and boom-bap at 90 must not turn into 180.
+        let ratio = tempo / found;
+        if !(70.0..=190.0).contains(&tempo) || (1.9..2.1).contains(&ratio) || (0.475..0.525).contains(&ratio) {
+            continue;
+        }
+        // A little either side: decoders pad the start and end of compressed files.
+        let fit = (-6..=6).map(|i| pulse.comb(tempo + i as f32 * 0.05, 16)).fold(f32::MIN, f32::max);
+        // 1, 2, 4, 8... bars are the usual loop lengths; 3, 6 or 12 bars happen, but rarely.
+        let usual = if bars.is_power_of_two() { 1.0 } else { ODD_BARS };
+        let rel = fit / found_score * usual * prior(tempo) / prior(found);
+        if pick.is_none_or(|(_, r)| rel > r) {
+            pick = Some((tempo, rel));
+        }
+    }
+    pick.filter(|(_, rel)| *rel >= LOOP_FIT).map(|(tempo, _)| tempo.round() as u32)
+}
+
+/// Longest file treated as a loop.
+const LOOP_MAX_SECS: f32 = 90.0;
+/// How well a whole-bar tempo must fit, relative to the best tempo found.
+const LOOP_FIT: f32 = 0.7;
+/// Weight of bar counts other than powers of two.
+const ODD_BARS: f32 = 0.6;
 
 // ---------- key ----------
 
@@ -361,6 +439,8 @@ const MINOR_LEAN: f32 = 1.3;
 const PHRYGIAN_RATIO: f32 = 2.0;
 /// ...and is at least this share of the tonic triad's average level.
 const PHRYGIAN_SHARE: f32 = 0.2;
+/// Pitch-class levels from the note model are raised to this power before matching.
+const NOTE_POWER: f32 = 0.75;
 
 fn median(v: &mut [f32]) -> f32 {
     let mid = v.len() / 2;
@@ -378,7 +458,12 @@ pub fn key_scored(x: &[f32]) -> Option<(Key, f32)> {
     match crate::notes::chroma(x) {
         // The model only answers when it hears notes, and the files a major/minor margin
         // would drop are still right ~60% of the time, so no margin filter here.
-        Some(c) => decide(&key_scores(&c), &c).map(|(k, _)| (k, 1.0)),
+        Some(c) => {
+            // Softened so one loud, long note (an 808) doesn't drown the rest: measured on
+            // two producer-kit sets, Phrygian loops and synthetic loops, +2% exact, no set worse.
+            let c = c.map(|v| v.powf(NOTE_POWER));
+            decide(&key_scores(&c), &c).map(|(k, _)| (k, 1.0))
+        }
         None => spectrum_key(x),
     }
 }
@@ -520,13 +605,14 @@ mod tests {
         assert_eq!(k("G#Min"), Some("G#m"));
         assert_eq!(k("CsMin"), Some("C#m"));
         assert_eq!(k("dmin"), Some("Dm"));
-        assert_eq!(k("Bb"), Some("Bb"));
+        assert_eq!(k("Bb"), Some("Bbmaj"));
         assert_eq!(k("Bmin"), Some("Bm"));
-        assert_eq!(k("F# major"), Some("F#"));
+        assert_eq!(k("F# major"), Some("F#maj"));
+        assert_eq!(k("Dbmaj"), Some("Dbmaj"));
         assert_eq!(k("8A"), Some("Am"));
-        assert_eq!(k("8B"), Some("C"));
+        assert_eq!(k("8B"), Some("Cmaj"));
         assert_eq!(k("1A"), Some("G#m"));
-        assert_eq!(k("12B"), Some("E"));
+        assert_eq!(k("12B"), Some("Emaj"));
         assert_eq!(k("Dphy"), Some("Dphy"));
         assert_eq!(k("DsPHY"), Some("Dsphy"));
         assert_eq!(k("dbphy"), Some("Csphy"));
@@ -544,6 +630,15 @@ mod tests {
         assert_eq!(tagged_stem("Song", Some(90), None), "Song 90 BPM");
         assert_eq!(tagged_stem("Loop 140BPM", Some(140), parse_key("Gm")), "Loop 140BPM Gm");
         assert_eq!(tagged_stem("Song", None, None), "Song");
+        // Already named (by us or by the producer): nothing doubled.
+        assert_eq!(tagged_stem("Beat 117 BPM C", Some(117), parse_key("C")), "Beat 117 BPM C");
+        assert_eq!(tagged_stem("Beat 117 BPM Cmaj", Some(140), parse_key("Am")), "Beat 117 BPM Cmaj");
+        assert_eq!(tagged_stem("SCH 146 Dphy @1onazz", Some(146), parse_key("Dm")), "SCH 146 Dphy @1onazz");
+        assert_eq!(tagged_stem("Melody 140BPM G#Min", Some(140), parse_key("Am")), "Melody 140BPM G#Min");
+        assert_eq!(tagged_stem("Loop 140BPM", Some(140), parse_key("Gm")), "Loop 140BPM Gm");
+        // A number alone is not a tempo, a common word is not a key.
+        assert_eq!(tagged_stem("Track 101", Some(120), parse_key("Am")), "Track 101 120 BPM Am");
+        assert_eq!(tagged_stem("I Am Here", Some(120), parse_key("Dm")), "I Am Here 120 BPM Dm");
     }
 
     /// A rich tone (decaying harmonics) at `midi`, `secs` long, added into `out` at `start`.
@@ -603,11 +698,28 @@ mod tests {
     }
 
     #[test]
+    fn whole_bar_loops_get_their_exact_tempo() {
+        // 8 bars at 147 with triplet hats on top: the triplets alone pull towards 98 (2/3).
+        let bpm = 147.0;
+        let mut x = song(bpm, &[&[57.0, 60.0, 64.0]], 8);
+        let step = 60.0 / bpm / 3.0;
+        for k in 0..(8 * 4 * 3) {
+            let at = (k as f32 * step * RATE) as usize;
+            for i in 0..(0.02 * RATE) as usize {
+                if let Some(v) = x.get_mut(at + i) {
+                    *v += 0.25 * (-(i as f32) / RATE * 200.0).exp() * if i % 2 == 0 { 1.0 } else { -1.0 };
+                }
+            }
+        }
+        assert_eq!(tempo(&x), Some(147));
+    }
+
+    #[test]
     fn finds_major_and_minor_keys() {
         // C major: C F G C.  A minor: Am Dm E Am (harmonic minor's raised G#).
         let c_major: [&[f32]; 4] = [&[60.0, 64.0, 67.0], &[65.0, 69.0, 72.0], &[67.0, 71.0, 74.0], &[60.0, 64.0, 67.0]];
         let a_minor: [&[f32]; 4] = [&[57.0, 60.0, 64.0], &[62.0, 65.0, 69.0], &[64.0, 68.0, 71.0], &[57.0, 60.0, 64.0]];
-        assert_eq!(key(&song(120.0, &c_major, 16)).map(|k| k.name()), Some("C"));
+        assert_eq!(key(&song(120.0, &c_major, 16)).map(|k| k.name()), Some("Cmaj"));
         assert_eq!(key(&song(120.0, &a_minor, 16)).map(|k| k.name()), Some("Am"));
         // Transposed and detuned by +30 cents: F#m.
         let fs_minor: Vec<Vec<f32>> = a_minor.iter().map(|ch| ch.iter().map(|m| m - 3.0 + 0.3).collect()).collect();

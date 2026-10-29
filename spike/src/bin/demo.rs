@@ -386,7 +386,7 @@ fn rect_of(h: HWND) -> RECT {
 
 /// Petal i of n on the open ring (clockwise from the top).
 fn petal(i: usize, n: usize) -> Option<(i32, i32)> {
-    let ring = visible_window("File Beaver menu", 2000)?;
+    let ring = visible_window("con/vert menu", 2000)?;
     let rr = rect_of(ring);
     let (cx, cy) = center(rr);
     let r = (rr.right - rr.left) as f64 * 180.0 / 384.0 * 0.665;
@@ -452,7 +452,7 @@ fn slide(r: RECT, from: f64, to: f64) {
 // ---------- scenes ----------
 
 fn beaver_center() -> Option<(i32, i32)> {
-    unsafe { FindWindowW(w!("FileBeaverWidget"), None) }.ok().map(|b| center(rect_of(b)))
+    unsafe { FindWindowW(w!("ConvertWidget"), None) }.ok().map(|b| center(rect_of(b)))
 }
 
 /// Picks up `file`, carries it onto the beaver (the ring opens around him), then slides
@@ -817,7 +817,7 @@ fn main() -> Result<()> {
         let desktop = FindWindowW(w!("Progman"), None).ok();
         let stage = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, w!("FileBeaverDemoStage"), w!("File Beaver demo"), WS_POPUP, 0, 0, sw, sh, desktop.unwrap_or_default(), None, hinst, None)?;
         STAGE.store(stage.0 as isize, SeqCst);
-        let beaver = FindWindowW(w!("FileBeaverWidget"), None).ok();
+        let beaver = FindWindowW(w!("ConvertWidget"), None).ok();
         let beaver_was = beaver.map(rect_of);
         if let Some(b) = beaver {
             let _ = SetWindowPos(b, None, px(BEAVER_AT.0), px(BEAVER_AT.1), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);

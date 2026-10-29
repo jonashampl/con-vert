@@ -88,6 +88,11 @@ pub fn apply(app: &AppHandle, s: &Settings) {
         Trigger::CtrlShift => TriggerKey::CtrlShift,
         Trigger::Alt => TriggerKey::Alt,
     });
+    // A development build must never register itself to start with Windows: its console
+    // window would pop up at every boot (this happened with an early test build).
+    if cfg!(debug_assertions) {
+        return;
+    }
     let auto = app.autolaunch();
     let res = if s.launch_at_startup { auto.enable() } else { auto.disable() };
     if let Err(e) = res {

@@ -124,7 +124,7 @@ fn size_at(pt: POINT) -> i32 {
 }
 
 /// Draws the icon at `scale` of the window into the layered window, as glass over the
-/// screen behind it. Skips the redraw when nothing changed.
+/// desktop behind it. Skips the redraw when nothing changed.
 unsafe fn paint(scale: f32) {
     unsafe {
         let size = SIZE_PX.load(SeqCst);
@@ -133,7 +133,7 @@ unsafe fn paint(scale: f32) {
         let mut r = RECT::default();
         let _ = GetWindowRect(hwnd(), &mut r);
         let (n, x, y) = (inner as i32, r.left + off as i32, r.top + off as i32);
-        let behind = crate::capture::screen_rgba(x, y, n, n, n, n)
+        let behind = crate::capture::desktop_rgba(x, y, n, n, false)
             .and_then(|px| RgbaImage::from_raw(inner, inner, px))
             .unwrap_or_else(|| RgbaImage::from_pixel(inner, inner, Rgba([40, 40, 44, 255])));
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -265,6 +265,11 @@ unsafe fn wndproc_body(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 }
                 LRESULT(0)
             }
+            // Picked up: redraw the desktop it will glide over (desktop icons may have moved).
+            WM_ENTERSIZEMOVE => {
+                let _ = crate::capture::desktop_rgba(0, 0, 1, 1, true);
+                LRESULT(0)
+            }
             WM_EXITSIZEMOVE => {
                 refit();
                 let mut r = RECT::default();
@@ -356,7 +361,7 @@ impl IDropTarget_Impl for BeaverDrop_Impl {
 /// `logical` its size in logical px.
 pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>, logical: i32) -> Result<()> {
     unsafe {
-        let class = w!("FileBeaverWidget");
+        let class = w!("ConvertWidget");
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: hinst.into(),
@@ -397,10 +402,6 @@ pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>, logical: 
             None,
         )?;
         HWND_RAW.store(h.0 as isize, SeqCst);
-        // Screen captures would include the icon itself, so its glass would feed on its
-        // own pixels; leaving it out of captures (Windows 10 2004+) breaks that loop. It
-        // also keeps the icon out of screenshots and recordings.
-        let _ = SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE);
         sink(h);
         paint(REST);
         SetTimer(h, TIMER_REFRESH, REFRESH_MS, None);

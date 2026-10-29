@@ -59,7 +59,7 @@ unsafe fn bitmap_rgba(hbm: HBITMAP, w: i32, h: i32, keep_alpha: bool) -> Option<
 }
 
 /// The screen rect at (x, y) of `w`x`h` physical pixels, scaled to `out_w`x`out_h`, as RGBA.
-/// Windows excluded from capture (the floating icon) are left out of it.
+/// Everything on screen is in it, the floating icon included.
 pub fn screen_rgba(x: i32, y: i32, w: i32, h: i32, out_w: i32, out_h: i32) -> Option<Vec<u8>> {
     unsafe {
         let screen = GetDC(None);
@@ -75,6 +75,70 @@ pub fn screen_rgba(x: i32, y: i32, w: i32, h: i32, out_w: i32, out_h: i32) -> Op
         let _ = DeleteObject(bmp);
         rgba
     }
+}
+
+/// The desktop itself (wallpaper and desktop icons) as drawn by the shell, without any
+/// window on top: what the floating icon sits on. Rendering it takes tens of ms, so it's
+/// cached and redrawn at most every DESKTOP_MAX_AGE, or when `fresh` asks for it.
+struct DesktopCache {
+    at: std::time::Instant,
+    /// Desktop window rect in screen pixels; `rgba` is its top-down image.
+    rect: windows::Win32::Foundation::RECT,
+    rgba: Vec<u8>,
+}
+
+static DESKTOP: std::sync::Mutex<Option<DesktopCache>> = std::sync::Mutex::new(None);
+const DESKTOP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(5);
+
+unsafe fn render_desktop() -> Option<DesktopCache> {
+    use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
+    use windows::Win32::UI::WindowsAndMessaging::{GetShellWindow, GetWindowRect};
+    unsafe {
+        let shell = GetShellWindow();
+        if shell.is_invalid() {
+            return None;
+        }
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        GetWindowRect(shell, &mut rect).ok()?;
+        let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        let screen = GetDC(None);
+        let mem = CreateCompatibleDC(screen);
+        let bmp = CreateCompatibleBitmap(screen, w, h);
+        let old = SelectObject(mem, bmp);
+        // PW_RENDERFULLCONTENT (2): the composed desktop, wallpaper included.
+        let ok = PrintWindow(shell, mem, PRINT_WINDOW_FLAGS(2)).as_bool();
+        SelectObject(mem, old);
+        let _ = DeleteDC(mem);
+        ReleaseDC(None, screen);
+        let rgba = if ok { bitmap_rgba(bmp, w, h, false) } else { None };
+        let _ = DeleteObject(bmp);
+        Some(DesktopCache { at: std::time::Instant::now(), rect, rgba: rgba? })
+    }
+}
+
+/// The desktop under the screen rect at (x, y) of `w`x`h` physical pixels, as RGBA. The
+/// floating icon's glass uses this instead of a screen capture, so the icon shows up in
+/// screenshots and recordings without its glass feeding on its own pixels.
+pub fn desktop_rgba(x: i32, y: i32, w: i32, h: i32, fresh: bool) -> Option<Vec<u8>> {
+    let mut cache = DESKTOP.lock().unwrap_or_else(|e| e.into_inner());
+    if fresh || cache.as_ref().is_none_or(|c| c.at.elapsed() > DESKTOP_MAX_AGE) {
+        *cache = unsafe { render_desktop() }.or(cache.take());
+    }
+    let c = cache.as_ref()?;
+    let (cw, ch) = (c.rect.right - c.rect.left, c.rect.bottom - c.rect.top);
+    let mut out = vec![0u8; (w * h * 4) as usize];
+    for row in 0..h {
+        let sy = (y - c.rect.top + row).clamp(0, ch - 1);
+        for col in 0..w {
+            let sx = (x - c.rect.left + col).clamp(0, cw - 1);
+            let (s, d) = (((sy * cw + sx) * 4) as usize, ((row * w + col) * 4) as usize);
+            out[d..d + 4].copy_from_slice(&c.rgba[s..s + 4]);
+        }
+    }
+    Some(out)
 }
 
 /// Captures the screen rect at (x, y) of `w`x`h` physical pixels, downscaled; the UI

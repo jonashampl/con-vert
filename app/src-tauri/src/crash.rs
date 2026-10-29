@@ -15,10 +15,10 @@ use windows::Win32::System::Diagnostics::Debug::{
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId};
 
-/// Where reports go: %LOCALAPPDATA%\app.filebeaver.desktop\crashes
+/// Where reports go: %LOCALAPPDATA%\app.convert.desktop\crashes
 pub fn dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    base.join("app.filebeaver.desktop").join("crashes")
+    base.join("app.convert.desktop").join("crashes")
 }
 
 fn marker() -> PathBuf {

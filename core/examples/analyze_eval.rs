@@ -1,8 +1,8 @@
 //! Measures BPM and key detection against files whose names state them
 //! ("Loop 140BPM G#Min.wav", "Loop 146 Dphy.mp3"). Reads only; prints misses, then accuracy against how many
 //! files get an answer at several confidence thresholds.
-//! usage: CONVERT_FFMPEG=ffmpeg.exe cargo run --release --example analyze_eval -- <list.txt>
-//!        (one audio file path per line)
+//! usage: CONVERT_FFMPEG=ffmpeg.exe cargo run --release --example analyze_eval -- <list.txt> [tempo|key]
+//!        (one audio file path per line; the optional word measures only that, faster)
 
 use shiftdrop_core::analyze::{self, Key};
 
@@ -53,25 +53,27 @@ fn kind(t: Key, k: Key) -> &'static str {
 
 fn main() {
     let list = std::fs::read_to_string(std::env::args().nth(1).expect("list file")).expect("read list");
+    let only = std::env::args().nth(2).unwrap_or_default();
+    let (do_tempo, do_key) = (only != "key", only != "tempo");
     let ffmpeg = shiftdrop_core::audio::ffmpeg().expect("set CONVERT_FFMPEG");
     let mut tempos: Vec<(u32, u32, f32)> = Vec::new();
     let mut keys: Vec<(Key, Key, f32)> = Vec::new();
     for path in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let p = std::path::Path::new(path);
         let name = p.file_stem().unwrap().to_string_lossy();
-        let (tb, tk) = (truth_bpm(&name), truth_key(&name));
+        let (tb, tk) = (truth_bpm(&name).filter(|_| do_tempo), truth_key(&name).filter(|_| do_key));
         if tb.is_none() && tk.is_none() {
             continue;
         }
         let Ok((pcm, _)) = analyze::decode(&ffmpeg, p) else { continue };
         let mut line = String::new();
-        if let (Some(t), Some((b, c))) = (tb, analyze::tempo_scored(&pcm)) {
+        if let Some((t, (b, c))) = tb.and_then(|t| analyze::tempo_scored(&pcm).map(|r| (t, r))) {
             tempos.push((t, b, c));
             if b != t {
                 line += &format!(" bpm {t}->{b} ({c:.2})");
             }
         }
-        if let (Some(t), Some((k, m))) = (tk, analyze::key_scored(&pcm)) {
+        if let Some((t, (k, m))) = tk.and_then(|t| analyze::key_scored(&pcm).map(|r| (t, r))) {
             keys.push((t, k, m));
             if k != t {
                 line += &format!(" key {}->{} {} ({m:.3})", t.name(), k.name(), kind(t, k));

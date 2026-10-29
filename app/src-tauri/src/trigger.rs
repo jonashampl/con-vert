@@ -44,9 +44,16 @@ const WM_APP_SHOW: u32 = WM_APP + 1;
 const WM_APP_HIDE: u32 = WM_APP + 2;
 const WM_APP_FLIP: u32 = WM_APP + 3;
 const WM_APP_DRAG_WATCH: u32 = WM_APP + 4;
+/// The trigger key during a mouse drag: open the ring only once it turns out to be a file drag.
+const WM_APP_ARM: u32 = WM_APP + 5;
 const TIMER_VERIFY: usize = 1;
 const TIMER_HIDE: usize = 2;
 const TIMER_DRAG_WATCH: usize = 3;
+const TIMER_ARM: usize = 4;
+/// How often, and how many times, to look for a file drag after the trigger key: the drag
+/// may still be starting when the key goes down together with the button.
+const ARM_MS: u32 = 30;
+const ARM_TRIES: u32 = 20;
 /// While the button is down after a drag starts, how often to check for a file drag, and
 /// how many checks after letting go before the beaver goes back down (the drop lands first).
 const DRAG_WATCH_MS: u32 = 60;
@@ -108,6 +115,12 @@ static BUTTON_DOWN: AtomicBool = AtomicBool::new(false);
 static DRAGGING: AtomicBool = AtomicBool::new(false);
 /// Drag-watch ticks since the button went up.
 static DRAG_TAIL: AtomicU32 = AtomicU32::new(0);
+static ARM_COUNT: AtomicU32 = AtomicU32::new(0);
+/// When either hook last heard anything (the event's tick count).
+static LAST_HOOK_TICK: AtomicU32 = AtomicU32::new(0);
+const HOOK_CHECK_MS: u32 = 10_000;
+/// Real input this much newer than anything the hook heard means the hook is gone.
+const HOOK_SILENCE_MS: i32 = 3_000;
 /// Ring visible or about to be.
 static SHOWN: AtomicBool = AtomicBool::new(false);
 /// Windows confirmed a file drag over the ring.
@@ -122,6 +135,8 @@ static DOWN_X: AtomicI32 = AtomicI32::new(0);
 static DOWN_Y: AtomicI32 = AtomicI32::new(0);
 /// Thread that owns the window the button went down on: a drag from there runs on it.
 static DOWN_THREAD: AtomicU32 = AtomicU32::new(0);
+/// The button went down on the desktop itself (dragging desktop icons).
+static DOWN_ON_DESKTOP: AtomicBool = AtomicBool::new(false);
 static CENTER_X: AtomicI32 = AtomicI32::new(0);
 static CENTER_Y: AtomicI32 = AtomicI32::new(0);
 /// Ring radius in physical pixels for the monitor it is on.
@@ -254,10 +269,10 @@ fn segment_count() -> usize {
 }
 
 fn hit(x: i32, y: i32) -> i32 {
-    // Near a screen corner the ring is pushed inwards, so a petal can lie over the beaver.
-    // While dragging, the beaver itself still counts as the hub: letting go on it keeps the
-    // ring open for a click instead of firing whichever petal happens to be there.
-    if FROM_BEAVER.load(SeqCst) && !CLICK_MODE.load(SeqCst) {
+    // Near a screen corner the ring is pushed inwards, so a petal can lie over the icon.
+    // The icon itself still counts as the hub: letting go on it keeps the ring open for a
+    // click, and clicking it switches pages, instead of firing whichever petal is there.
+    if FROM_BEAVER.load(SeqCst) {
         if let Some((l, t, r, b)) = crate::beaver::visible_rect() {
             if x >= l && x < r && y >= t && y < b {
                 return -1;
@@ -293,6 +308,9 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
 }
 
 unsafe fn mouse_hook_body(code: i32, wparam: WPARAM, lparam: LPARAM) {
+    if code >= 0 {
+        LAST_HOOK_TICK.store(unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) }.time, SeqCst);
+    }
     if code >= 0 && ENABLED.load(SeqCst) {
         let info = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
         let (x, y) = (info.pt.x, info.pt.y);
@@ -302,7 +320,11 @@ unsafe fn mouse_hook_body(code: i32, wparam: WPARAM, lparam: LPARAM) {
                 DRAGGING.store(false, SeqCst);
                 DOWN_X.store(x, SeqCst);
                 DOWN_Y.store(y, SeqCst);
-                DOWN_THREAD.store(unsafe { GetWindowThreadProcessId(WindowFromPoint(POINT { x, y }), None) }, SeqCst);
+                // Which window it went down on is looked up on the trigger thread once a drag
+                // starts: WindowFromPoint can wait on a busy app, and a hook must never wait
+                // (Windows lags all input meanwhile, and drops a hook that is slow too often).
+                DOWN_THREAD.store(0, SeqCst);
+                DOWN_ON_DESKTOP.store(false, SeqCst);
                 // Re-read the real modifier state each press: if Windows ever skipped a
                 // key-up for this hook, Shift would otherwise stay "held" and taps be ignored.
                 let held = |vk: VIRTUAL_KEY| unsafe { (GetAsyncKeyState(vk.0 as i32) as u16 & 0x8000) != 0 };
@@ -335,7 +357,7 @@ unsafe fn mouse_hook_body(code: i32, wparam: WPARAM, lparam: LPARAM) {
                     post(WM_APP_DRAG_WATCH, 0, 0);
                     // Key already held when the drag began counts as a tap.
                     if trigger_held() && !SHOWN.swap(true, SeqCst) {
-                        post(WM_APP_SHOW, x as usize, y as isize);
+                        post(WM_APP_ARM, 0, 0);
                     }
                 }
             }
@@ -352,6 +374,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
 unsafe fn keyboard_hook_body(code: i32, wparam: WPARAM, lparam: LPARAM) {
     if code >= 0 {
         let info = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        LAST_HOOK_TICK.store(info.time, SeqCst);
         let pressed = matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
         let before = trigger_held();
         let vk = VIRTUAL_KEY(info.vkCode as u16);
@@ -374,9 +397,7 @@ unsafe fn keyboard_hook_body(code: i32, wparam: WPARAM, lparam: LPARAM) {
             if SHOWN.swap(true, SeqCst) {
                 post(WM_APP_FLIP, 0, 0);
             } else {
-                let mut pt = POINT::default();
-                let _ = unsafe { GetCursorPos(&mut pt) };
-                post(WM_APP_SHOW, pt.x as usize, pt.y as isize);
+                post(WM_APP_ARM, 0, 0);
             }
         }
     }
@@ -487,7 +508,7 @@ impl DropTarget_Impl {
     fn drag_enter(&self, obj: Option<&IDataObject>, _k: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         let paths = obj.and_then(read_paths).unwrap_or_default();
         if paths.is_empty() {
-            log::debug!("DragEnter: not a file drag, hiding");
+            log::info!("DragEnter: not a file drag, hiding");
             unsafe { *effect = DROPEFFECT_NONE };
             post(WM_APP_HIDE, 0, 0);
             return Ok(());
@@ -535,6 +556,7 @@ impl DropTarget_Impl {
         }
         *self.data.borrow_mut() = None;
         // Dragging off the ring closes it; tap the key again to reopen.
+        log::info!("drag left the ring");
         post(WM_APP_HIDE, 0, 0);
         Ok(())
     }
@@ -605,6 +627,7 @@ impl IDropTarget_Impl for DropTarget_Impl {
 }
 
 fn refuse(effect: *mut DROPEFFECT) -> Result<()> {
+    log::info!("drop target failed, hiding the ring");
     if !effect.is_null() {
         unsafe { *effect = DROPEFFECT_NONE };
     }
@@ -665,9 +688,24 @@ unsafe fn show_at(x: i32, y: i32) {
         // Crossing onto a monitor with another DPI may resize it; put the size back.
         let _ = SetWindowPos(ring, drop, left, top, win, win, flags);
 
-        // If Windows doesn't confirm a real file drag soon, this wasn't one.
-        SetTimer(drop, TIMER_VERIFY, VERIFY_MS, None);
+        // Windows looks for the window under a drag only when the mouse moves: nudge it so
+        // the ring takes the drag at once, even with the cursor held still over the icon.
+        nudge_cursor();
+        // If Windows doesn't confirm a real file drag soon, this wasn't one. A file dropped
+        // on the icon was one already: that ring stays until the button goes up.
+        if !FROM_BEAVER.load(SeqCst) {
+            SetTimer(drop, TIMER_VERIFY, VERIFY_MS, None);
+        }
         log::debug!("ring shown at ({cx}, {cy}) r={r}");
+    }
+}
+
+/// A zero-distance mouse move: makes a running drag-and-drop look at the window under the
+/// cursor again (the ring that just opened there).
+fn nudge_cursor() {
+    let input = INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dwFlags: MOUSEEVENTF_MOVE, ..Default::default() } } };
+    unsafe {
+        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
     }
 }
 
@@ -680,6 +718,7 @@ fn flip_page() {
     }
     PAGE.store(next, SeqCst);
     drop(menu);
+    log::debug!("ring page {next}");
     HOVER.store(-2, SeqCst); // next DragOver re-reports hover for the new page
     emit(RingEvent::Page { page: next });
 }
@@ -687,6 +726,7 @@ fn flip_page() {
 fn hide() {
     unsafe {
         let _ = KillTimer(overlay(), TIMER_VERIFY);
+        let _ = KillTimer(overlay(), TIMER_ARM);
         let _ = ShowWindow(overlay(), SW_HIDE);
         let _ = ShowWindowAsync(ring_window(), SW_HIDE);
     }
@@ -699,6 +739,14 @@ fn hide() {
     PENDING.lock().unwrap_or_else(|e| e.into_inner()).clear();
     HOVER.store(-1, SeqCst);
     *menu_lock() = None;
+}
+
+/// The desktop (Progman / WorkerW and the icon list inside them).
+fn is_desktop(h: HWND) -> bool {
+    let root = unsafe { GetAncestor(h, GA_ROOT) };
+    let mut name = [0u16; 16];
+    let n = unsafe { GetClassNameW(root, &mut name) } as usize;
+    matches!(String::from_utf16_lossy(&name[..n]).as_str(), "Progman" | "WorkerW")
 }
 
 /// True while some app is running an OLE drag-and-drop: its thread hands mouse capture to
@@ -754,14 +802,39 @@ unsafe fn wndproc_body(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 show_at(wparam.0 as i32, lparam.0 as i32);
                 LRESULT(0)
             }
+            WM_APP_ARM => {
+                ARM_COUNT.store(0, SeqCst);
+                SetTimer(hwnd, TIMER_ARM, ARM_MS, None);
+                LRESULT(0)
+            }
+            // Only a file drag opens the ring: Shift while moving notes in FL Studio, a
+            // window or a text selection must not.
+            WM_TIMER if wparam.0 == TIMER_ARM => {
+                if file_drag_under_way() {
+                    let _ = KillTimer(hwnd, TIMER_ARM);
+                    let mut pt = POINT::default();
+                    let _ = GetCursorPos(&mut pt);
+                    show_at(pt.x, pt.y);
+                } else if !BUTTON_DOWN.load(SeqCst) || ARM_COUNT.fetch_add(1, SeqCst) >= ARM_TRIES {
+                    let _ = KillTimer(hwnd, TIMER_ARM);
+                    SHOWN.store(false, SeqCst);
+                    log::info!("trigger key during a drag that isn't a file drag, ring not shown");
+                }
+                LRESULT(0)
+            }
             WM_APP_DRAG_WATCH => {
+                let under = WindowFromPoint(POINT { x: DOWN_X.load(SeqCst), y: DOWN_Y.load(SeqCst) });
+                DOWN_THREAD.store(GetWindowThreadProcessId(under, None), SeqCst);
+                DOWN_ON_DESKTOP.store(is_desktop(under), SeqCst);
                 DRAG_TAIL.store(0, SeqCst);
                 SetTimer(hwnd, TIMER_DRAG_WATCH, DRAG_WATCH_MS, None);
                 LRESULT(0)
             }
             WM_TIMER if wparam.0 == TIMER_DRAG_WATCH => {
                 if BUTTON_DOWN.load(SeqCst) {
-                    if file_drag_under_way() {
+                    // The icon already sits on the desktop: raising it over desktop-icon
+                    // drags only re-parents it under the shell mid-drag, which upset them.
+                    if !DOWN_ON_DESKTOP.load(SeqCst) && file_drag_under_way() {
                         crate::beaver::raise(true);
                     }
                 } else if DRAG_TAIL.fetch_add(1, SeqCst) >= DRAG_WATCH_TAIL {
@@ -822,7 +895,7 @@ unsafe fn run() -> Result<()> {
         );
         OleInitialize(None)?;
         let hinst = GetModuleHandleW(None)?;
-        let class = w!("FileBeaverDropTarget");
+        let class = w!("ConvertDropTarget");
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: hinst.into(),
@@ -863,13 +936,32 @@ unsafe fn run() -> Result<()> {
                         windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
                     );
                     let hinst = windows::Win32::Foundation::HMODULE(module as *mut _);
-                    let m = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), hinst, 0);
-                    let k = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), hinst, 0);
-                    m.is_ok() && k.is_ok()
+                    let install = move || (SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), hinst, 0), SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), hinst, 0));
+                    let hooks = install();
+                    (hooks.0.is_ok() && hooks.1.is_ok(), hooks, install)
                 };
-                let _ = hooks_ready.0.send(installed);
+                let (ok, mut hooks, install) = installed;
+                let _ = hooks_ready.0.send(ok);
+                // Windows silently removes a low-level hook that keeps answering late (a slow
+                // moment on a long-running PC), and the ring would stop opening until a
+                // restart. Every few seconds, check the mouse hook still hears the mouse and
+                // put both hooks back if it doesn't.
+                SetTimer(None, 0, HOOK_CHECK_MS, None);
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).into() {
+                    if msg.message == WM_TIMER && msg.hwnd.is_invalid() {
+                        let mut last = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+                        let _ = GetLastInputInfo(&mut last);
+                        let heard = LAST_HOOK_TICK.load(SeqCst);
+                        if last.dwTime.wrapping_sub(heard) as i32 > HOOK_SILENCE_MS && windows::Win32::System::SystemInformation::GetTickCount().wrapping_sub(last.dwTime) < HOOK_CHECK_MS {
+                            log::warn!("input hooks went quiet, installing them again");
+                            if let Ok(h) = hooks.0 { let _ = UnhookWindowsHookEx(h); }
+                            if let Ok(h) = hooks.1 { let _ = UnhookWindowsHookEx(h); }
+                            hooks = install();
+                            LAST_HOOK_TICK.store(windows::Win32::System::SystemInformation::GetTickCount(), SeqCst);
+                        }
+                        continue;
+                    }
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }

@@ -199,6 +199,9 @@ fn one_by_one(
 /// neither could be found.
 fn tagged_stem(ffmpeg: &Path, src: &Path) -> String {
     let stem = naming::stem(src);
+    if analyze::name_has(&stem) == (true, true) {
+        return stem;
+    }
     match analyze::analyze(ffmpeg, src) {
         Ok((bpm, key)) => analyze::tagged_stem(&stem, bpm, key),
         Err(_) => stem,
@@ -279,6 +282,9 @@ pub fn tool(id: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, p
             report(0.0, "Reading tempo and key");
             let stem = tagged_stem(&ff, src);
             if stem == naming::stem(src) {
+                if analyze::name_has(&stem) == (true, true) {
+                    bail!("its name already has the tempo and key");
+                }
                 bail!("no steady beat or clear key found");
             }
             let ext = src.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
