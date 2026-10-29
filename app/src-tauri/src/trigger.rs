@@ -46,12 +46,16 @@ const WM_APP_FLIP: u32 = WM_APP + 3;
 const WM_APP_DRAG_WATCH: u32 = WM_APP + 4;
 /// The trigger key during a mouse drag: open the ring only once it turns out to be a file drag.
 const WM_APP_ARM: u32 = WM_APP + 5;
+/// Settings / tray "Reset icon": close everything and put the icon back.
+const WM_APP_RESET: u32 = WM_APP + 6;
 /// Where the trigger key was tapped, while the invisible drop target waits there for Windows
 /// to bring it a file drag (only then is the ring drawn).
 static ARMED_AT: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 const TIMER_VERIFY: usize = 1;
 const TIMER_HIDE: usize = 2;
 const TIMER_DRAG_WATCH: usize = 3;
+/// Once a second: undo states that can only be stale (see WM_TIMER below).
+const TIMER_WATCHDOG: usize = 5;
 /// While the button is down after a drag starts, how often to check for a file drag, and
 /// how many checks after letting go before the beaver goes back down (the drop lands first).
 const DRAG_WATCH_MS: u32 = 60;
@@ -113,6 +117,11 @@ static BUTTON_DOWN: AtomicBool = AtomicBool::new(false);
 static DRAGGING: AtomicBool = AtomicBool::new(false);
 /// Drag-watch ticks since the button went up.
 static DRAG_TAIL: AtomicU32 = AtomicU32::new(0);
+/// Watchdog: seconds the drop target has been up with no button held, and in click mode.
+static STALE_SECS: AtomicU32 = AtomicU32::new(0);
+static CLICK_SECS: AtomicU32 = AtomicU32::new(0);
+/// A ring waiting for a click closes by itself after this long.
+const CLICK_MODE_MAX_SECS: u32 = 120;
 /// When either hook last heard anything (the event's tick count).
 static LAST_HOOK_TICK: AtomicU32 = AtomicU32::new(0);
 const HOOK_CHECK_MS: u32 = 10_000;
@@ -184,6 +193,11 @@ pub fn show_no_activate(hwnd: isize) {
         let h = HWND(hwnd as *mut _);
         let _ = SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
+}
+
+/// Closes the ring, clears every drag state and puts the floating icon back in its corner.
+pub fn reset() {
+    post(WM_APP_RESET, 0, 0);
 }
 
 /// Opens the ring centred on a screen point (used by the floating beaver: a file dragged
@@ -835,6 +849,52 @@ unsafe fn wndproc_body(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 show_at(pt.x, pt.y, false);
                 LRESULT(0)
             }
+            WM_APP_RESET => {
+                let _ = KillTimer(hwnd, TIMER_HIDE);
+                let _ = KillTimer(hwnd, TIMER_DRAG_WATCH);
+                hide();
+                SHOWN.store(false, SeqCst);
+                BUTTON_DOWN.store(false, SeqCst);
+                DRAGGING.store(false, SeqCst);
+                crate::beaver::reset();
+                log::info!("reset: ring closed, drag state cleared");
+                LRESULT(0)
+            }
+            // Self-repair for states that can only be stale: the button isn't really down any
+            // more (a lost button-up), the invisible drop target is up with no drag, the ring
+            // was left waiting for a click, or it's "open" with nothing on screen.
+            WM_TIMER if wparam.0 == TIMER_WATCHDOG => {
+                // GetAsyncKeyState reads physical buttons: the primary one is the right one for
+                // left-handed mouse settings.
+                let primary = if GetSystemMetrics(SM_SWAPBUTTON) != 0 { VK_RBUTTON } else { VK_LBUTTON };
+                let pressed = (GetAsyncKeyState(primary.0 as i32) as u16 & 0x8000) != 0;
+                if BUTTON_DOWN.load(SeqCst) && !pressed {
+                    BUTTON_DOWN.store(false, SeqCst);
+                    DRAGGING.store(false, SeqCst);
+                    log::info!("watchdog: the button was up, drag state cleared");
+                }
+                let up = IsWindowVisible(hwnd).as_bool();
+                if CLICK_MODE.load(SeqCst) {
+                    STALE_SECS.store(0, SeqCst);
+                    // Waiting for a click with no ring drawn: only the invisible target is left.
+                    let drawn = IsWindowVisible(ring_window()).as_bool();
+                    if CLICK_SECS.fetch_add(if drawn { 1 } else { 40 }, SeqCst) + 1 >= CLICK_MODE_MAX_SECS {
+                        log::info!("watchdog: nobody clicked the ring, closing it");
+                        hide();
+                    }
+                } else if (up || SHOWN.load(SeqCst)) && !pressed {
+                    CLICK_SECS.store(0, SeqCst);
+                    if STALE_SECS.fetch_add(1, SeqCst) + 1 >= 3 {
+                        log::info!("watchdog: ring left open with no drag, closing it");
+                        hide();
+                        SHOWN.store(false, SeqCst);
+                    }
+                } else {
+                    STALE_SECS.store(0, SeqCst);
+                    CLICK_SECS.store(0, SeqCst);
+                }
+                LRESULT(0)
+            }
             WM_APP_DRAG_WATCH => {
                 let under = WindowFromPoint(POINT { x: DOWN_X.load(SeqCst), y: DOWN_Y.load(SeqCst) });
                 DOWN_THREAD.store(GetWindowThreadProcessId(under, None), SeqCst);
@@ -930,6 +990,7 @@ unsafe fn run() -> Result<()> {
         let helper: Option<IDropTargetHelper> = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok();
         let target: IDropTarget = DropTarget { helper, data: RefCell::new(None), described: RefCell::new(None) }.into();
         RegisterDragDrop(hwnd, &target)?;
+        SetTimer(hwnd, TIMER_WATCHDOG, 1000, None);
         // The floating beaver lives on this thread too (it needs OLE and this message loop).
         if let Err(e) = crate::beaver::create(hinst, hooks().beaver_pos, hooks().icon_size) {
             log::error!("couldn't create the floating beaver: {e:?}");

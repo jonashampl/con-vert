@@ -167,6 +167,14 @@ fn main() -> Result<()> {
             // Hold perfectly still well past the old 0.8 s cut-off.
             sleep(Duration::from_millis(1800));
             report("2. ring stays open while the file is held still on the icon", ring_visible());
+            // Snapshot for a look at how it draws (set RING_SHOT to a .png path).
+            if let (Ok(out), Ok(ring)) = (std::env::var("RING_SHOT"), FindWindowW(None, w!("con/vert menu"))) {
+                let r = rect_of(ring);
+                let ff = std::env::var("CONVERT_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
+                let _ = std::process::Command::new(ff)
+                    .args(["-loglevel", "error", "-y", "-f", "gdigrab", "-offset_x", &r.left.to_string(), "-offset_y", &r.top.to_string(), "-video_size", &format!("{}x{}", r.right - r.left, r.bottom - r.top), "-i", "desktop", "-frames:v", "1", &out])
+                    .status();
+            }
             // ---- 3. Shift while holding: second page ----
             tap(VK_SHIFT);
             sleep(Duration::from_millis(400));

@@ -357,6 +357,39 @@ impl IDropTarget_Impl for BeaverDrop_Impl {
     }
 }
 
+/// Where the icon starts out: the main screen's bottom-right corner, as (x, y, size).
+unsafe fn home() -> (i32, i32, i32) {
+    unsafe {
+        let mut work = RECT::default();
+        let _ = SystemParametersInfoW(SPI_GETWORKAREA, 0, Some(&mut work as *mut _ as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
+        let size = size_at(POINT { x: work.right - 1, y: work.bottom - 1 });
+        let margin = (MARGIN_LOGICAL * size as f64 / LOGICAL.load(SeqCst) as f64) as i32;
+        (work.right - size - margin, work.bottom - size - margin, size)
+    }
+}
+
+/// Puts the icon back in its corner, visible, at desktop level and freshly drawn: the way
+/// out when it seems stuck. Call on the trigger thread.
+pub(crate) unsafe fn reset() {
+    unsafe {
+        if HWND_RAW.load(SeqCst) == 0 {
+            return;
+        }
+        let h = hwnd();
+        let (x, y, size) = home();
+        SIZE_PX.store(size, SeqCst);
+        let _ = SetWindowPos(h, None, x, y, size, size, SWP_NOZORDER | SWP_NOACTIVATE);
+        RAISED.store(false, SeqCst);
+        sink(h);
+        WANT_VISIBLE.store(true, SeqCst);
+        let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
+        let _ = crate::capture::desktop_rgba(0, 0, 1, 1, true);
+        DRAWN.store(0, SeqCst);
+        paint(REST);
+        log::info!("icon reset to ({x}, {y}), {size}px");
+    }
+}
+
 /// Creates the icon on the calling (trigger) thread. `start` is where it was last left,
 /// `logical` its size in logical px.
 pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>, logical: i32) -> Result<()> {
@@ -378,13 +411,7 @@ pub(crate) unsafe fn create(hinst: HMODULE, start: Option<(i32, i32)>, logical: 
         let on_screen = |(x, y): (i32, i32)| !MonitorFromPoint(POINT { x: x + 10, y: y + 10 }, MONITOR_DEFAULTTONULL).is_invalid();
         let (x, y, size) = match start.filter(|p| on_screen(*p)) {
             Some((x, y)) => (x, y, size_at(POINT { x, y })),
-            None => {
-                let mut work = RECT::default();
-                let _ = SystemParametersInfoW(SPI_GETWORKAREA, 0, Some(&mut work as *mut _ as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
-                let size = size_at(POINT { x: work.right - 1, y: work.bottom - 1 });
-                let margin = (MARGIN_LOGICAL * size as f64 / LOGICAL.load(SeqCst) as f64) as i32;
-                (work.right - size - margin, work.bottom - size - margin, size)
-            }
+            None => home(),
         };
         SIZE_PX.store(size, SeqCst);
         let h = CreateWindowExW(

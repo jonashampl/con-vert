@@ -14,6 +14,14 @@ const report = (message: string) => invoke("log_js_error", { view: view || "#set
 window.addEventListener("error", (e) => report(`${e.message} at ${e.filename}:${e.lineno}`));
 window.addEventListener("unhandledrejection", (e) => report(`unhandled promise rejection: ${String(e.reason)}`));
 
+// No browser right-click menu (Back, Refresh, Print...): it means nothing here, and in the
+// ring and card windows, which never take focus, it couldn't even be closed. Text fields
+// keep theirs for copy and paste.
+window.addEventListener("contextmenu", (e) => {
+  const t = e.target as HTMLElement | null;
+  if (!t?.closest("input, textarea, [contenteditable='true']")) e.preventDefault();
+});
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     {view === "#ring" ? <Ring /> : view === "#toast" ? <Toast /> : view === "#editor" ? <Editor /> : <App />}

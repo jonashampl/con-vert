@@ -120,6 +120,14 @@ export default function App() {
         />
       </label>
 
+      <div className="row">
+        <span>
+          Icon stuck or ring won't open?
+          <span className="hint"> Closes the ring and puts the icon back in its corner.</span>
+        </span>
+        <button onClick={() => invoke("reset_icon").then(() => setStatus("Icon reset"))}>Reset icon</button>
+      </div>
+
       <p className="status">{status}</p>
 
       <section className="about">

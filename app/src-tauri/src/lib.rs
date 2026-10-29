@@ -65,6 +65,26 @@ fn hide_toast(app: AppHandle) {
     }
 }
 
+/// Settings / tray: close any stuck ring or card and put the icon back in its corner.
+#[tauri::command]
+fn reset_icon(app: AppHandle) {
+    reset_icon_now(&app);
+}
+
+fn reset_icon_now(app: &AppHandle) {
+    hide_toast(app.clone());
+    trigger::reset();
+    {
+        let state = app.state::<AppState>();
+        let mut s = state.settings.lock().unwrap_or_else(|e| e.into_inner());
+        s.beaver_pos = None;
+        if let Err(e) = settings::save(app, &s) {
+            log::warn!("could not save the icon's position: {e}");
+        }
+    }
+    set_beaver(app, true);
+}
+
 #[tauri::command]
 fn cancel_job() {
     jobs::CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -151,6 +171,7 @@ pub fn run() {
             save_settings,
             reveal_in_folder,
             hide_toast,
+            reset_icon,
             cancel_job,
             editor::editor_file,
             editor::editor_save_image,
@@ -167,9 +188,10 @@ pub fn run() {
             let enabled_item = CheckMenuItem::with_id(app, "enabled", "Enabled", true, s.enabled, None::<&str>)?;
             let beaver_item = CheckMenuItem::with_id(app, "beaver", "Show icon", true, s.show_beaver, None::<&str>)?;
             let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+            let reset_item = MenuItem::with_id(app, "reset", "Reset icon", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit con/vert", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let menu = Menu::with_items(app, &[&enabled_item, &beaver_item, &settings_item, &sep, &quit_item])?;
+            let menu = Menu::with_items(app, &[&enabled_item, &beaver_item, &reset_item, &settings_item, &sep, &quit_item])?;
 
             TrayIconBuilder::with_id("tray")
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
@@ -186,6 +208,7 @@ pub fn run() {
                         set_beaver(app, on);
                     }
                     "settings" => show_settings(app),
+                    "reset" => reset_icon_now(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -200,6 +223,10 @@ pub fn run() {
             settings::apply(&handle, &s);
 
             let ring = app.get_webview_window("ring").expect("ring window in tauri.conf.json");
+            // The ring is only drawn; the native drop target above it takes every click. Left
+            // clickable, a ring window that lingered would block the icon and open the web
+            // view's own right-click menu.
+            let _ = ring.set_ignore_cursor_events(true);
             let ring_hwnd = ring.hwnd()?.0 as isize;
             trigger::prepare_overlay_window(ring_hwnd);
             let toast = app.get_webview_window("toast").expect("toast window in tauri.conf.json");
