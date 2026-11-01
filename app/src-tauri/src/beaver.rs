@@ -90,14 +90,15 @@ pub(crate) fn raise(on: bool) {
     }
 }
 
-/// Down to desktop level: owned by the desktop window (Windows keeps an owned window just
-/// above its owner, and Show desktop leaves it alone), below every normal window.
+/// Down to desktop level: below every normal window. Not owned by the desktop window:
+/// windows owned across threads share one input queue with their owner, so after a drag
+/// Explorer's desktop could leave the icon deaf to clicks (no moving it, no second ring)
+/// until the desktop itself was clicked. Show desktop minimises windows, and the icon (a
+/// tool window that can't be minimised) stays in view.
 unsafe fn sink(h: HWND) {
     unsafe {
+        SetWindowLongPtrW(h, GWLP_HWNDPARENT, 0);
         let _ = SetWindowPos(h, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        if let Ok(desktop) = FindWindowW(w!("Progman"), None) {
-            SetWindowLongPtrW(h, GWLP_HWNDPARENT, desktop.0 as isize);
-        }
         let _ = SetWindowPos(h, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 }

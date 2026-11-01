@@ -83,6 +83,18 @@ fn ring_within(ms: u64) -> bool {
     false
 }
 
+/// Class and owner title of the window at a screen point.
+fn top_class(p: (i32, i32)) -> String {
+    unsafe {
+        let h = WindowFromPoint(POINT { x: p.0, y: p.1 });
+        let root = GetAncestor(h, GA_ROOT);
+        let (mut c, mut t) = ([0u16; 64], [0u16; 64]);
+        let n = GetClassNameW(h, &mut c) as usize;
+        let m = GetWindowTextW(root, &mut t) as usize;
+        format!("{} in \"{}\"", String::from_utf16_lossy(&c[..n]), String::from_utf16_lossy(&t[..m]))
+    }
+}
+
 fn report(step: &str, ok: bool) {
     println!("{} {step}", if ok { "PASS" } else { "FAIL" });
 }
@@ -200,10 +212,21 @@ fn main() -> Result<()> {
     report("1a. Shift during an Explorer file drag opens the ring", ring_within(1200));
     cancel(at);
     report("1b. Esc closes it", !ring_visible());
+    // What sits on top of the icon now? Must be the icon itself.
+    let ic = center(rect_of(icon));
+    let top = unsafe { WindowFromPoint(POINT { x: ic.0, y: ic.1 }) };
+    let mut name = [0u16; 64];
+    let n = unsafe { GetClassNameW(top, &mut name) } as usize;
+    let class = String::from_utf16_lossy(&name[..n]);
+    let overlay_up = unsafe { FindWindowW(w!("ConvertDropTarget"), None) }.is_ok_and(|h| unsafe { IsWindowVisible(h) }.as_bool());
+    println!("   on top of the icon: {class}; drop target visible: {overlay_up}");
+    report("1c. nothing left covering the icon", class == "ConvertWidget");
 
     // ---- 2. move the icon, then drag the file onto it ----
+    let before = center(rect_of(icon));
     move_icon(icon, (-120, -40));
     let target = center(rect_of(icon));
+    println!("   icon moved {before:?} -> {target:?}; on top there: {}", top_class(target));
     mouse(MOUSE_EVENT_FLAGS(0), file.0, file.1);
     sleep(Duration::from_millis(100));
     mouse(MOUSEEVENTF_LEFTDOWN, file.0, file.1);
@@ -225,6 +248,47 @@ fn main() -> Result<()> {
         report("3b. Shift again keeps the ring open on its other page", ring_visible());
     }
     cancel(at);
+
+    // ---- 4. move the icon, drag the file onto it, Shift twice (log: ring page 1, 0) ----
+    move_icon(icon, (-120, -40));
+    let target = center(rect_of(icon));
+    mouse(MOUSE_EVENT_FLAGS(0), file.0, file.1);
+    sleep(Duration::from_millis(100));
+    mouse(MOUSEEVENTF_LEFTDOWN, file.0, file.1);
+    sleep(Duration::from_millis(120));
+    glide(file, (file.0 + 60, file.1));
+    glide((file.0 + 60, file.1), target);
+    let opened = ring_within(1500);
+    sleep(Duration::from_millis(500));
+    println!("4. shift taps now");
+    tap(VK_SHIFT);
+    sleep(Duration::from_millis(400));
+    tap(VK_SHIFT);
+    sleep(Duration::from_millis(400));
+    report("4a. after moving the icon, a ring opened from it stays open through Shift", opened && ring_visible());
+    // Move about over the ring, as a hand looking for a petal does.
+    let ring = unsafe { FindWindowW(None, w!("con/vert menu")) }.ok().map(rect_of);
+    if let Some(r) = ring {
+        let c = center(r);
+        glide(target, (c.0, c.1 - (r.bottom - r.top) / 3));
+        sleep(Duration::from_millis(300));
+        report("4b. moving over the petals keeps it open", ring_visible());
+        // ---- 5. let go on the icon, click the hub (log: ring page) ----
+        glide((c.0, c.1 - (r.bottom - r.top) / 3), target);
+        sleep(Duration::from_millis(200));
+    }
+    mouse(MOUSEEVENTF_LEFTUP, target.0, target.1);
+    sleep(Duration::from_millis(700));
+    report("5a. let go on the icon: ring waits for a click", ring_visible());
+    println!("5. hub click now");
+    mouse(MOUSEEVENTF_LEFTDOWN, target.0, target.1);
+    sleep(Duration::from_millis(60));
+    mouse(MOUSEEVENTF_LEFTUP, target.0, target.1);
+    sleep(Duration::from_millis(400));
+    report("5b. clicking the icon flips the page (ring still open)", ring_visible());
+    tap(VK_ESCAPE);
+    sleep(Duration::from_millis(500));
+    move_icon(icon, (120, 40));
     unsafe {
         let _ = PostMessageW(win, WM_CLOSE, WPARAM(0), LPARAM(0));
     }

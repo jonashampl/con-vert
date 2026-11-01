@@ -741,7 +741,7 @@ fn flip_page() {
     }
     PAGE.store(next, SeqCst);
     drop(menu);
-    log::debug!("ring page {next}");
+    log::info!("ring page {next}");
     HOVER.store(-2, SeqCst); // next DragOver re-reports hover for the new page
     emit(RingEvent::Page { page: next });
 }
