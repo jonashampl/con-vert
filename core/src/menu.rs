@@ -150,8 +150,8 @@ pub fn build(paths: &[String], caps: &Caps) -> Menu {
     } else {
         tools_page(&formats, caps)
     };
-    let images = formats.iter().all(|f| f.is_some_and(|f| f.is_image()));
-    let start_page = if convert.iter().any(|s| s.enabled) && !(images && tools.iter().any(|s| s.enabled)) {
+    // Every kind of file opens on its conversions; Shift or the hub flips to the tools.
+    let start_page = if convert.iter().any(|s| s.enabled) {
         CONVERT_PAGE
     } else {
         TOOLS_PAGE
@@ -196,7 +196,7 @@ mod tests {
             ids(&m.pages[CONVERT_PAGE]),
             ["convert:png", "convert:webp", "convert:heic", "convert:tiff", "convert:avif", "convert:bmp", "convert:pdf", "convert:docx"]
         );
-        assert_eq!(m.start_page, TOOLS_PAGE);
+        assert_eq!(m.start_page, CONVERT_PAGE);
         assert_eq!(m.title, "Page 001.jpg");
     }
 
