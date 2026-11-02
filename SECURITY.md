@@ -3,7 +3,7 @@
 ## Reporting a problem
 
 If you find a security problem in con/vert, please report it privately through
-[GitHub's private vulnerability reporting](https://github.com/{{GH_USER}}/con-vert/security/advisories/new)
+[GitHub's private vulnerability reporting](https://github.com/jonashampl/con-vert/security/advisories/new)
 rather than in a public issue. Include what you found, how to reproduce it and which
 version you were using (Settings shows it).
 

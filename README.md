@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/{{GH_USER}}/con-vert/releases/latest"><b>Download for Windows</b></a> ·
+  <a href="https://github.com/jonashampl/con-vert/releases/latest"><b>Download for Windows</b></a> ·
   by <b>Jonas J. Hampl</b> · Instagram <a href="https://instagram.com/1onazz">@1onazz</a>
 </p>
 
@@ -38,7 +38,7 @@ edit, annotate, redact, add a background or strip metadata.
 ## Install
 
 1. Download `con-vert_x.y.z_x64-setup.exe` from the
-   [latest release](https://github.com/{{GH_USER}}/con-vert/releases/latest).
+   [latest release](https://github.com/jonashampl/con-vert/releases/latest).
 2. Open it. It installs in a few seconds, without admin rights.
 3. A glass icon appears on your desktop and con/vert starts with Windows.
 
