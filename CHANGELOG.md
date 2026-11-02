@@ -3,6 +3,14 @@
 All notable changes to con/vert. Releases before con/vert are File Beaver's, the project
 con/vert is built on.
 
+## 1.0.3 (3 November 2026)
+
+- Key detection retuned on 1757 files with known keys: 837 songs from ten genres (GTZAN),
+  604 EDM tracks (GiantSteps), 283 kit loops and 33 producer beats. Keys right 56.0% ->
+  59.8% overall: songs 58.5% -> 63.1%, EDM 52.3% -> 58.3%. Phrygian is named far more
+  carefully: false "phy" calls 124 -> 49. The 808-overtone change from 1.0.2 is undone
+  (it cost songs and EDM more than it gained beats).
+
 ## 1.0.2 (2 November 2026)
 
 - Key detection: a distorted 808's overtones no longer read as a major third, and minor

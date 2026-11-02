@@ -1,6 +1,6 @@
 [package]
 name = "shiftdrop"
-version = "1.0.2"
+version = "1.0.3"
 description = "Shift-drag file actions for Windows"
 authors = ["Jonas J. Hampl"]
 edition = "2024"
