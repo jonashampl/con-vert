@@ -1,18 +1,22 @@
-con/vert is free and open source
-=================================
+con/vert is free
+================
 
-con/vert is open source software under the MIT License (full text below).
-You may use, copy, change and share it, free of charge.
+con/vert is made by Jonas J. Hampl (Instagram: @1onazz).
 
-It is built on the source code of File Beaver, created and published by
-DEVIOUSDEV101:
+It's free. You may use it for anything, including paid work (the files you
+make with it are yours), and you may copy, change and share it. You may not
+sell con/vert itself or a changed version of it. The full terms are below and
+in LICENSE.txt in the install folder.
+
+con/vert is built on the source code of File Beaver, created and published
+as open source by DEVIOUSDEV101:
 
     https://github.com/DEVIOUSDEV101/file-beaver
 
-Thank you, DEVIOUSDEV101, for creating File Beaver and sharing it as open
-source. con/vert keeps everything File Beaver does with images and PDFs and
-adds audio and video: format conversion, tempo and key detection, and audio
-tools.
+Thank you, DEVIOUSDEV101, for creating File Beaver and sharing it. con/vert
+keeps everything File Beaver does with images and PDFs and adds audio and
+video: format conversion, tempo and key detection, and audio tools. File
+Beaver's own code stays under its original MIT License.
 
 Audio and video are handled by FFmpeg (LGPL v3), installed alongside the app.
 Key detection uses Spotify's Basic Pitch note model (Apache-2.0).
@@ -20,11 +24,49 @@ The licences of FFmpeg and every other component are in THIRD_PARTY_NOTICES.txt
 and ffmpeg-LICENSE.txt in the install folder.
 
 
-MIT License
------------
+Full licence
+------------
 
-Copyright (c) 2026 DEVIOUSDEV101 (File Beaver)
-Copyright (c) 2026 con/vert contributors (audio and video additions)
+con/vert
+Copyright (c) 2026 Jonas J. Hampl (Instagram: @1onazz)
+
+In plain words: con/vert is free. You may use it for anything, including paid work
+(the files you make with it are yours), and you may copy, change and share it. You
+may not sell con/vert itself or a changed version of it. The full terms below are
+what count.
+
+con/vert is built on File Beaver by DEVIOUSDEV101. File Beaver's own code stays
+under its original MIT License (part 2), and remains freely available from
+https://github.com/DEVIOUSDEV101/file-beaver
+
+
+Part 1: con/vert
+================
+
+"Commons Clause" License Condition v1.0
+
+The Software is provided to you by the Licensor under the License, as defined
+below, subject to the following condition.
+
+Without limiting other conditions in the License, the grant of rights under the
+License will not include, and the License does not grant to you, the right to
+Sell the Software.
+
+For purposes of the foregoing, "Sell" means practicing any or all of the rights
+granted to you under the License to provide to third parties, for a fee or other
+consideration (including without limitation fees for hosting or consulting/
+support services related to the Software), a product or service whose value
+derives, entirely or substantially, from the functionality of the Software. Any
+license notice or attribution required by the License must also include this
+Commons Clause License Condition notice.
+
+Software: con/vert
+License: MIT
+Licensor: Jonas J. Hampl
+
+MIT License
+
+Copyright (c) 2026 Jonas J. Hampl
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -43,3 +85,40 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+Part 2: File Beaver (the code con/vert is built on)
+===================================================
+
+MIT License
+
+Copyright (c) 2026 DEVIOUSDEV101
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+Name and logo
+=============
+
+The licences above cover the code, not the con/vert name or logo. A changed
+version you share must use a different name, so nobody mistakes it for the
+original.
+
+Other components (FFmpeg, Spotify's Basic Pitch model and the libraries listed
+in THIRD_PARTY_NOTICES.txt) keep their own licences.

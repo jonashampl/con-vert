@@ -1,7 +1,22 @@
 # Changelog
 
-All notable changes to File Beaver. Installed copies update themselves; this is what they
-get.
+All notable changes to con/vert. Releases before con/vert are File Beaver's, the project
+con/vert is built on.
+
+## 1.0.0 (2 November 2026)
+
+First public release of con/vert by Jonas J. Hampl, built on File Beaver 0.1.1.
+
+- Audio and video: convert to MP3, WAV, FLAC, M4A, OGG, OPUS and AAC; BPM + Key naming
+  (major, minor and Phrygian); Compress; Cover art; Zip.
+- Glass desktop icon, Reset icon in Settings and the tray.
+- Shift opens the ring only for drags that start in File Explorer or on the desktop, so it
+  never gets in the way in other apps (FL Studio and the like); their files can go onto
+  the icon.
+- Every file opens the ring on its conversions; Shift or the middle switches to the tools.
+- Licence: free, not for resale (MIT with the Commons Clause).
+
+# File Beaver
 
 ## 0.1.1 (26 October 2026)
 

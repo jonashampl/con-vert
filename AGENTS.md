@@ -1,6 +1,6 @@
-# Working on File Beaver (for AI coding agents)
+# Working on con/vert (for AI coding agents)
 
-File Beaver is a Windows desktop app: a floating beaver (and a Shift-while-dragging trigger)
+con/vert (built on File Beaver) is a Windows desktop app: a floating glass icon (and a Shift-while-dragging trigger)
 opens a radial menu of file actions. Read this before changing anything. Humans are welcome
 to read it too.
 

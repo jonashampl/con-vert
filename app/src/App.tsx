@@ -134,8 +134,9 @@ export default function App() {
         <h2>About</h2>
         <div className="row">
           <span>con/vert {version}</span>
-          <span className="hint">Based on File Beaver (MIT)</span>
+          <span className="hint">by Jonas J. Hampl · Instagram @1onazz</span>
         </div>
+        <p className="hint">Free, not for resale. Built on File Beaver by DEVIOUSDEV101.</p>
       </section>
     </main>
   );

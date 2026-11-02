@@ -1,5 +1,5 @@
 name: Something isn't working
-description: Report a bug in File Beaver
+description: Report a bug in con/vert
 labels: [bug]
 body:
   - type: markdown
@@ -10,7 +10,7 @@ body:
     attributes:
       label: What happened?
       description: What did you do, what did you expect, and what happened instead?
-      placeholder: I dragged a PDF onto the beaver and chose JPG, but…
+      placeholder: I dragged a WAV, tapped Shift and chose MP3, but…
     validations:
       required: true
   - type: input
@@ -21,9 +21,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: File Beaver version
+      label: con/vert version
       description: Shown in Settings (click the tray icon).
-      placeholder: "0.1.1"
+      placeholder: "1.0.0"
     validations:
       required: true
   - type: dropdown
@@ -37,5 +37,5 @@ body:
     id: log
     attributes:
       label: Log (optional)
-      description: The last lines of `%LOCALAPPDATA%\app.filebeaver.desktop\logs\shiftdrop.log`. Check it for anything private before pasting.
+      description: The last lines of `%LOCALAPPDATA%\app.convert.desktop\logs\shiftdrop.log`. Check it for anything private before pasting.
       render: text

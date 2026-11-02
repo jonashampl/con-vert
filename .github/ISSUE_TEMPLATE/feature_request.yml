@@ -5,7 +5,7 @@ body:
   - type: textarea
     id: idea
     attributes:
-      label: What would you like File Beaver to do?
+      label: What would you like con/vert to do?
       placeholder: Convert Word documents to PDF.
     validations:
       required: true

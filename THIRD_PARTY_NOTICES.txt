@@ -1,7 +1,7 @@
 THIRD-PARTY SOFTWARE NOTICES
 ============================
 
-File Beaver is built with the open-source components listed below. Each is used under the
+con/vert is built with the open-source components listed below. Each is used under the
 licence shown; the full licence texts follow.
 
 This software is based in part on the work of the Independent JPEG Group.
