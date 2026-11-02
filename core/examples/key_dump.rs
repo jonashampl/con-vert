@@ -1,6 +1,6 @@
 //! Dumps, per file named with its key, the pitch classes the note model hears (the input
 //! key choice works from), one JSON line each. For tuning key choice offline. Besides the
-//! plain sum ("ch") it writes variants with bass overtones taken off ("v1".."v5").
+//! plain sum ("ch") it writes what the app uses ("v1"), per piano key ("p88") and per segment ("segs").
 //! usage: CONVERT_FFMPEG=ffmpeg.exe cargo run --release --example key_dump -- <list.txt>
 
 use shiftdrop_core::{analyze, notes};
@@ -50,6 +50,25 @@ fn suppressed(frames: &[[f32; 88]], partials: &[(usize, f32)], bass_below: usize
     out
 }
 
+/// Like `suppressed` with the app's overtone rule, but per piano key instead of pitch class.
+fn per_key(frames: &[[f32; 88]]) -> Vec<f32> {
+    let mut out = vec![0.0f32; 88];
+    for f in frames {
+        let mut v = *f;
+        for k in 0..60 - 21 {
+            if f[k] > 0.2 {
+                v[k + 28] = (v[k + 28] - f[k]).max(0.0);
+            }
+        }
+        for (k, a) in v.into_iter().enumerate() {
+            if a > 0.2 {
+                out[k] += a;
+            }
+        }
+    }
+    out
+}
+
 fn main() {
     let list = std::fs::read_to_string(std::env::args().nth(1).expect("list file")).expect("read list");
     let ff = shiftdrop_core::audio::ffmpeg().expect("set CONVERT_FFMPEG");
@@ -59,11 +78,11 @@ fn main() {
         let Ok((pcm, _)) = analyze::decode(&ff, p) else { continue };
         let Some(frames) = notes::activations(&pcm) else { continue };
         let ch = suppressed(&frames, &[], 0);
+        // What the app uses, as pitch classes, as the 88 keys (for octave weighting) and
+        // per ~10 s segment (for voting).
         let v1 = suppressed(&frames, &[(28, 1.0)], 60);
-        let v2 = suppressed(&frames, &[(28, 1.0), (34, 1.0)], 60);
-        let v3 = suppressed(&frames, &[(19, 0.6), (28, 1.0), (31, 0.6), (34, 1.0)], 60);
-        let v4 = suppressed(&frames, &[(28, 1.0), (34, 1.0)], 72);
-        let v5 = suppressed(&frames, &[(28, 0.5), (34, 0.5), (40, 0.5)], 60);
-        println!("{{\"truth\":\"{}\",\"ch\":{ch:?},\"v1\":{v1:?},\"v2\":{v2:?},\"v3\":{v3:?},\"v4\":{v4:?},\"v5\":{v5:?}}}", truth.name());
+        let keys = per_key(&frames);
+        let segs: Vec<[f32; 12]> = frames.chunks(860).map(|c| suppressed(c, &[(28, 1.0)], 60)).collect();
+        println!("{{\"truth\":\"{}\",\"ch\":{ch:?},\"v1\":{v1:?},\"p88\":{keys:?},\"segs\":{segs:?}}}", truth.name());
     }
 }
