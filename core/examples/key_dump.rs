@@ -1,5 +1,6 @@
 //! Dumps, per file named with its key, the pitch classes the note model hears (the input
-//! key choice works from), one JSON line each. For tuning key choice offline.
+//! key choice works from), one JSON line each. For tuning key choice offline. Besides the
+//! plain sum ("ch") it writes variants with bass overtones taken off ("v1".."v5").
 //! usage: CONVERT_FFMPEG=ffmpeg.exe cargo run --release --example key_dump -- <list.txt>
 
 use shiftdrop_core::{analyze, notes};
@@ -24,6 +25,31 @@ fn truth_key(name: &str) -> Option<analyze::Key> {
     None
 }
 
+/// Pitch classes after taking each low note's overtones (semitones up, share) off the notes
+/// above it, frame by frame. `bass_below`: only notes under this MIDI number count as sources.
+fn suppressed(frames: &[[f32; 88]], partials: &[(usize, f32)], bass_below: usize) -> [f32; 12] {
+    let mut out = [0.0f32; 12];
+    for f in frames {
+        let mut v = *f;
+        for k in 0..88 {
+            if 21 + k >= bass_below || v[k] <= 0.2 {
+                continue;
+            }
+            for &(up, share) in partials {
+                if let Some(h) = v.get_mut(k + up) {
+                    *h = (*h - f[k] * share).max(0.0);
+                }
+            }
+        }
+        for (k, a) in v.into_iter().enumerate() {
+            if a > 0.2 {
+                out[(21 + k) % 12] += a;
+            }
+        }
+    }
+    out
+}
+
 fn main() {
     let list = std::fs::read_to_string(std::env::args().nth(1).expect("list file")).expect("read list");
     let ff = shiftdrop_core::audio::ffmpeg().expect("set CONVERT_FFMPEG");
@@ -31,7 +57,13 @@ fn main() {
         let p = std::path::Path::new(path);
         let Some(truth) = truth_key(&p.file_stem().unwrap().to_string_lossy()) else { continue };
         let Ok((pcm, _)) = analyze::decode(&ff, p) else { continue };
-        let ch = notes::chroma(&pcm).map(|c| format!("{c:?}")).unwrap_or_else(|| "null".into());
-        println!("{{\"truth\":\"{}\",\"ch\":{ch}}}", truth.name());
+        let Some(frames) = notes::activations(&pcm) else { continue };
+        let ch = suppressed(&frames, &[], 0);
+        let v1 = suppressed(&frames, &[(28, 1.0)], 60);
+        let v2 = suppressed(&frames, &[(28, 1.0), (34, 1.0)], 60);
+        let v3 = suppressed(&frames, &[(19, 0.6), (28, 1.0), (31, 0.6), (34, 1.0)], 60);
+        let v4 = suppressed(&frames, &[(28, 1.0), (34, 1.0)], 72);
+        let v5 = suppressed(&frames, &[(28, 0.5), (34, 0.5), (40, 0.5)], 60);
+        println!("{{\"truth\":\"{}\",\"ch\":{ch:?},\"v1\":{v1:?},\"v2\":{v2:?},\"v3\":{v3:?},\"v4\":{v4:?},\"v5\":{v5:?}}}", truth.name());
     }
 }

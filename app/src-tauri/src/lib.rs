@@ -231,6 +231,13 @@ pub fn run() {
             trigger::prepare_overlay_window(ring_hwnd);
             let toast = app.get_webview_window("toast").expect("toast window in tauri.conf.json");
             trigger::prepare_overlay_window(toast.hwnd()?.0 as isize);
+            // The card can be dragged aside; its glass follows.
+            let moved_handle = handle.clone();
+            toast.on_window_event(move |e| {
+                if let WindowEvent::Moved(_) = e {
+                    jobs::renew_backdrop(&moved_handle);
+                }
+            });
 
             shiftdrop_core::wic::init_thread();
             let caps = shiftdrop_core::wic::caps();

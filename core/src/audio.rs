@@ -278,21 +278,27 @@ pub fn tool(id: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, p
     let Some(ff) = ffmpeg() else { return missing() };
     match id {
         "zip" => zip(paths, out, cancel, progress),
-        "bpmkey" => one_by_one(paths, cancel, progress, |src, report| {
-            report(0.0, "Reading tempo and key");
-            let stem = tagged_stem(&ff, src);
-            if stem == naming::stem(src) {
-                if analyze::name_has(&stem) == (true, true) {
-                    bail!("its name already has the tempo and key");
+        // Always reads the audio, even when the name states a tempo and key: a name can be
+        // wrong, and then the copy gets them corrected where they stood.
+        "bpmkey" => {
+            let mut o = one_by_one(paths, cancel, progress, |src, report| {
+                report(0.0, "Reading tempo and key");
+                let (bpm, key) = analyze::analyze(&ff, src)?;
+                if bpm.is_none() && key.is_none() {
+                    bail!("no steady beat or clear key found");
                 }
-                bail!("no steady beat or clear key found");
+                let Some(stem) = analyze::retag(&naming::stem(src), bpm, key) else { return Ok(None) };
+                let ext = src.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+                naming::write_new_with(&naming::target_dir(src, out), &stem, &ext, |tmp| {
+                    std::fs::copy(src, tmp).map(|_| ()).context("can't copy the file")
+                })
+                .map(Some)
+            });
+            if o.outputs.is_empty() && o.errors.is_empty() && !o.cancelled {
+                o.summary = "Its name already has the right tempo and key".into();
             }
-            let ext = src.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
-            naming::write_new_with(&naming::target_dir(src, out), &stem, &ext, |tmp| {
-                std::fs::copy(src, tmp).map(|_| ()).context("can't copy the file")
-            })
-            .map(Some)
-        }),
+            o
+        }
         _ => {
             let mut sizes: Vec<(u64, u64)> = Vec::new();
             let mut o = one_by_one(paths, cancel, progress, |src, report| {

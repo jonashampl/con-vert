@@ -3,6 +3,19 @@
 All notable changes to con/vert. Releases before con/vert are File Beaver's, the project
 con/vert is built on.
 
+## 1.0.2 (2 November 2026)
+
+- Key detection: a distorted 808's overtones no longer read as a major third, and minor
+  is favoured more. On a producer's own 33 beats 58% -> 67% keys right, on 262 kit loops
+  53% -> 55%; minor beats named major dropped from 16% to 6%.
+- BPM + Key always listens, even when the name already states a tempo and key. If they're
+  wrong, the copy gets them corrected where they stood ("ANIME 140 gsMIN" -> "ANIME 140 BPM
+  Fm"); if they're right, the card says so.
+- Key names written with capitals are understood: "CSMIN", "DBmin".
+- The progress card can be dragged aside; its glass follows.
+- The glass icon stays at desktop level: it no longer jumps above windows during drags in
+  other apps, and drags in FL Studio no longer make the ring flicker on it.
+
 ## 1.0.0 (2 November 2026)
 
 First public release of con/vert by Jonas J. Hampl, built on File Beaver 0.1.1.

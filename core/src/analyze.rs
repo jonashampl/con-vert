@@ -70,9 +70,9 @@ pub fn parse_key(s: &str) -> Option<Key> {
     };
     let rest: String = chars.collect();
     let mut rest = rest.as_str();
-    for (prefix, shift) in [("#", 1), ("♯", 1), ("♭", -1), ("b", -1), ("s", 1)] {
+    for (prefix, shift) in [("#", 1), ("♯", 1), ("♭", -1), ("b", -1), ("s", 1), ("B", -1), ("S", 1)] {
         // "b" and "s" are accidentals only when something (or nothing) that reads as a
-        // quality follows: "Bb", "Bbm", "Csmin"; not "Bmin" read as B-flat.
+        // quality follows: "Bb", "Bbm", "Csmin", "CSMIN", "DBmin"; not "Bmin" read as B-flat.
         if let Some(r) = rest.strip_prefix(prefix) {
             if prefix.len() > 1 || prefix == "#" || quality(r).is_some() {
                 tonic += shift;
@@ -183,6 +183,114 @@ pub fn name_has(stem: &str) -> (bool, bool) {
     let number = |i: usize| lower[i].parse::<u32>().is_ok_and(|n| (60..=200).contains(&n));
     let bare_tempo = (0..tokens.len()).any(|i| number(i) && ((i > 0 && spelled(tokens[i - 1])) || tokens.get(i + 1).is_some_and(|t| spelled(t))));
     (lower.iter().any(|t| is_bpm(t)) || bare_tempo, has_key)
+}
+
+/// The name with its tempo and key set to these, written where the old ones stood ("ANIME
+/// 140 gsMIN x" -> "ANIME 140 BPM G#m x") or added at the end. What wasn't found keeps the
+/// name's value. None when the name already says exactly this.
+pub fn retag(stem: &str, bpm: Option<u32>, key: Option<Key>) -> Option<String> {
+    let mut toks: Vec<(usize, &str)> = Vec::new();
+    let mut start = None;
+    for (i, c) in stem.char_indices() {
+        if c.is_ascii_alphanumeric() || c == '#' {
+            start.get_or_insert(i);
+        } else if let Some(s) = start.take() {
+            toks.push((s, &stem[s..i]));
+        }
+    }
+    if let Some(s) = start {
+        toks.push((s, &stem[s..]));
+    }
+    let lower: Vec<String> = toks.iter().map(|t| t.1.to_ascii_lowercase()).collect();
+    let tempo = |i: usize| lower.get(i).and_then(|t| t.parse::<u32>().ok()).filter(|n| (50..=250).contains(n));
+    let spelled = |t: &str| {
+        t.len() <= 9 && ["min", "minor", "maj", "major", "phy", "phry", "moll", "dur"].iter().any(|q| t.to_ascii_lowercase().ends_with(q)) && parse_key(t).is_some()
+    };
+    let (mut bpms, mut keys, mut spans): (Vec<u32>, Vec<Key>, Vec<usize>) = (Vec::new(), Vec::new(), Vec::new());
+    for i in 0..toks.len() {
+        let t = toks[i].1;
+        let l = lower[i].as_str();
+        if l == "bpm" {
+            spans.push(i);
+            for j in [i.wrapping_sub(1), i + 1] {
+                if let Some(n) = tempo(j) {
+                    bpms.push(n);
+                    spans.push(j);
+                    break;
+                }
+            }
+            if let Some(k) = toks.get(i + 1).and_then(|n| parse_key(n.1)) {
+                keys.push(k);
+                spans.push(i + 1);
+            }
+        } else if let Some(n) = l.strip_suffix("bpm").and_then(|d| d.parse::<u32>().ok()) {
+            bpms.push(n);
+            spans.push(i);
+        } else if spelled(t) {
+            keys.extend(parse_key(t));
+            spans.push(i);
+            // A bare tempo right beside the key: "SCH 146 Dphy".
+            for j in [i.wrapping_sub(1), i + 1] {
+                if let Some(n) = tempo(j) {
+                    bpms.push(n);
+                    spans.push(j);
+                    break;
+                }
+            }
+        } else if t.len() <= 2 && matches!(lower.get(i + 1).map(String::as_str), Some("min" | "minor" | "maj" | "major")) {
+            // "D min"
+            if let Some(k) = parse_key(&format!("{t}{}", toks[i + 1].1)) {
+                keys.push(k);
+                spans.push(i);
+                spans.push(i + 1);
+            }
+        } else {
+            // Tempo and key run together: "146CbMIN".
+            let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+            if (2..=3).contains(&digits) && spelled(&t[digits..]) {
+                bpms.extend(t[..digits].parse::<u32>().ok());
+                keys.extend(parse_key(&t[digits..]));
+                spans.push(i);
+            }
+        }
+        // "key D min": the word "key" goes with it.
+        if l == "key" && toks.get(i + 1).is_some_and(|n| parse_key(n.1).is_some()) {
+            spans.push(i);
+        }
+    }
+    // Right already only if every tag in the name agrees (a name can carry an older one too).
+    let agrees = |found: &[u32], b: u32| !found.is_empty() && found.iter().all(|x| *x == b);
+    if bpm.is_none_or(|b| agrees(&bpms, b)) && key.is_none_or(|k| !keys.is_empty() && keys.iter().all(|x| *x == k)) {
+        return None;
+    }
+    let tag = [bpm.or(bpms.first().copied()).map(|b| format!("{b} BPM")), key.or(keys.first().copied()).map(|k| k.name().to_string())]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+    spans.sort_unstable();
+    spans.dedup();
+    let mut out = String::new();
+    let mut at = 0;
+    for (n, &i) in spans.iter().enumerate() {
+        let (s, t) = toks[i];
+        out.push_str(&stem[at..s]);
+        if n == 0 {
+            out.push_str(&tag);
+        }
+        at = s + t.len();
+    }
+    out.push_str(&stem[at..]);
+    if spans.is_empty() {
+        out.push(' ');
+        out.push_str(&tag);
+    }
+    // Tidy the gaps the old tags left: "a - 126 - Fmin @x" -> "a - 126 BPM Fm - @x".
+    let mut out = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    while out.contains(" - - ") {
+        out = out.replace(" - - ", " - ");
+    }
+    Some(out.trim_matches(|c: char| c == ' ' || c == '-').to_string())
 }
 
 // ---------- spectra ----------
@@ -434,8 +542,9 @@ fn key_scores(chroma: &[f32; 12]) -> [f32; 24] {
 /// Harmonics 2-8 as (semitones up, share of the fundamental's level taken off). Strong on
 /// purpose: distorted 808s and saws carry loud overtones (measured best at these values).
 const HARMONICS: [(usize, f32); 7] = [(12, 1.0), (19, 0.8), (24, 0.6), (28, 0.5), (31, 0.4), (34, 0.3), (36, 0.24)];
-/// How much more the minor-scale notes count when deciding major or minor.
-const MINOR_LEAN: f32 = 1.3;
+/// How much more the minor-scale notes count when deciding major or minor. 2 (from 1.3)
+/// fixed minor beats named major in a producer's own set and changed nothing in kit loops.
+const MINOR_LEAN: f32 = 2.0;
 /// Phrygian when the flat second outweighs the natural one by this much...
 const PHRYGIAN_RATIO: f32 = 2.0;
 /// ...and is at least this share of the tonic triad's average level.
@@ -616,6 +725,8 @@ mod tests {
         assert_eq!(k("12B"), Some("Emaj"));
         assert_eq!(k("Dphy"), Some("Dphy"));
         assert_eq!(k("DsPHY"), Some("Dsphy"));
+        assert_eq!(k("CSMIN"), Some("C#m"));
+        assert_eq!(k("DBmin"), Some("C#m"));
         assert_eq!(k("dbphy"), Some("Csphy"));
         assert_eq!(k("C min phy"), Some("Cphy"));
         assert_eq!(k("hello"), None);
@@ -641,6 +752,27 @@ mod tests {
         assert_eq!(tagged_stem("Track 101", Some(120), parse_key("Am")), "Track 101 120 BPM Am");
         assert_eq!(tagged_stem("I Am Here", Some(120), parse_key("Dm")), "I Am Here 120 BPM Dm");
         assert_eq!(tagged_stem("Track 101 x Amin", Some(140), parse_key("Am")), "Track 101 x Amin 140 BPM");
+    }
+
+    #[test]
+    fn retags_in_place() {
+        let r = |s: &str, b: u32, k: &str| retag(s, Some(b), parse_key(k));
+        // Producer names, rewritten where the tags stood.
+        assert_eq!(r("ANIME 140 gsMIN 1onazzz", 140, "Fm").as_deref(), Some("ANIME 140 BPM Fm 1onazzz"));
+        assert_eq!(r("(hard, dark) gnarly 156bpm abmin @1hellion_", 156, "Fm").as_deref(), Some("(hard, dark) gnarly 156 BPM Fm @1hellion_"));
+        assert_eq!(r("betrayal - 126 - Fmin @tr1pleq", 126, "Cm").as_deref(), Some("betrayal - 126 BPM Cm - @tr1pleq"));
+        assert_eq!(r("MP 127Cbmin @1onazz", 127, "Dm").as_deref(), Some("MP 127 BPM Dm @1onazz"));
+        assert_eq!(r("@nioh @1onazz - Loyal Member bpm 130 key D min", 130, "Fm").as_deref(), Some("@nioh @1onazz - Loyal Member 130 BPM Fm"));
+        assert_eq!(r("JRAZZZY 119 BPM DbMIN @1onazz", 119, "Ebm").as_deref(), Some("JRAZZZY 119 BPM Ebm @1onazz"));
+        // Our own earlier tag after the producer's: both replaced by one.
+        assert_eq!(r("CLOUD 140 CSMIN 140 BPM Amaj", 140, "C#m").as_deref(), Some("CLOUD 140 BPM C#m"));
+        // Already right (any spelling): nothing to save.
+        assert_eq!(r("ANIME 140 gsMIN 1onazzz", 140, "G#m"), None);
+        assert_eq!(r("Song 124 BPM Am", 124, "Am"), None);
+        // Nothing in the name yet: added at the end, words that look like keys left alone.
+        assert_eq!(r("I Am Here", 120, "Dm").as_deref(), Some("I Am Here 120 BPM Dm"));
+        // Only the key found: the name's tempo stays.
+        assert_eq!(retag("Loop 140BPM G#Min", None, parse_key("Am")).as_deref(), Some("Loop 140 BPM Am"));
     }
 
     /// A rich tone (decaying harmonics) at `midi`, `secs` long, added into `out` at `start`.

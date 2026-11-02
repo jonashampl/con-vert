@@ -37,7 +37,6 @@ const REST: f32 = 0.88;
 const PERKED: f32 = 1.0;
 
 const WM_APP_VISIBLE: u32 = WM_APP + 20;
-const WM_APP_RAISE: u32 = WM_APP + 21;
 const ID_SETTINGS: usize = 1;
 const ID_HIDE: usize = 2;
 
@@ -54,7 +53,6 @@ pub enum BeaverEvent {
 
 static HWND_RAW: AtomicIsize = AtomicIsize::new(0);
 static WANT_VISIBLE: AtomicBool = AtomicBool::new(true);
-static RAISED: AtomicBool = AtomicBool::new(false);
 static SIZE_PX: AtomicI32 = AtomicI32::new(48);
 /// Chosen edge in logical px.
 static LOGICAL: AtomicI32 = AtomicI32::new(48);
@@ -76,16 +74,6 @@ pub fn set_visible(on: bool) {
     if HWND_RAW.load(SeqCst) != 0 {
         unsafe {
             let _ = PostMessageW(hwnd(), WM_APP_VISIBLE, WPARAM(on as usize), LPARAM(0));
-        }
-    }
-}
-
-/// Brings the beaver above every window (a file drag is under way) or sends it back down
-/// to the desktop. Safe from any thread.
-pub(crate) fn raise(on: bool) {
-    if RAISED.swap(on, SeqCst) != on && HWND_RAW.load(SeqCst) != 0 {
-        unsafe {
-            let _ = PostMessageW(hwnd(), WM_APP_RAISE, WPARAM(on as usize), LPARAM(0));
         }
     }
 }
@@ -290,15 +278,6 @@ unsafe fn wndproc_body(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 LRESULT(0)
             }
             WM_NCRBUTTONDOWN => LRESULT(0),
-            WM_APP_RAISE => {
-                if wp.0 != 0 {
-                    SetWindowLongPtrW(h, GWLP_HWNDPARENT, 0);
-                    let _ = SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-                } else {
-                    sink(h);
-                }
-                LRESULT(0)
-            }
             WM_APP_VISIBLE => {
                 let _ = ShowWindow(h, if wp.0 != 0 { SW_SHOWNOACTIVATE } else { SW_HIDE });
                 LRESULT(0)
@@ -326,7 +305,9 @@ impl BeaverDrop_Impl {
 impl IDropTarget_Impl for BeaverDrop_Impl {
     fn DragEnter(&self, obj: Option<&IDataObject>, _k: MODIFIERKEYS_FLAGS, _pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         crate::crash::guarded("beaver drag enter", || {
-            let files = obj.map(|o| unsafe { o.QueryGetData(&crate::trigger::hdrop_format()) == S_OK }).unwrap_or(false);
+            // The same test the ring makes: FL Studio's own drags claim files but hand none
+            // over, and a looser check here had the ring open and close in a loop.
+            let files = obj.and_then(crate::trigger::read_paths).is_some_and(|p| !p.is_empty());
             log::debug!("beaver drag enter, files={files}");
             if files {
                 self.perk(true);
@@ -380,7 +361,6 @@ pub(crate) unsafe fn reset() {
         let (x, y, size) = home();
         SIZE_PX.store(size, SeqCst);
         let _ = SetWindowPos(h, None, x, y, size, size, SWP_NOZORDER | SWP_NOACTIVATE);
-        RAISED.store(false, SeqCst);
         sink(h);
         WANT_VISIBLE.store(true, SeqCst);
         let _ = ShowWindow(h, SW_SHOWNOACTIVATE);

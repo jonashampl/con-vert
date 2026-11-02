@@ -166,6 +166,22 @@ pub fn backdrop(x: i32, y: i32, w: i32, h: i32) -> Option<String> {
     encode_png(BACKDROP_PX as u32, BACKDROP_PX as u32, &screen_rgba(x, y, w, h, BACKDROP_PX, BACKDROP_PX)?)
 }
 
+/// The screen behind `hwnd`'s own rect with that window left out of the capture for a
+/// moment, so a visible card can renew its glass. Screenshots of it still work afterwards.
+pub fn backdrop_behind(hwnd: isize, x: i32, y: i32, w: i32, h: i32) -> Option<String> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE};
+    let win = HWND(hwnd as *mut _);
+    unsafe { SetWindowDisplayAffinity(win, WDA_EXCLUDEFROMCAPTURE).ok()? };
+    // The next composed frame drops it; capture after that.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let shot = backdrop(x, y, w, h);
+    unsafe {
+        let _ = SetWindowDisplayAffinity(win, WDA_NONE);
+    }
+    shot
+}
+
 /// Explorer's thumbnail (or icon) for `path`. Call from a worker thread.
 pub fn thumbnail(path: &str, size: i32) -> Option<String> {
     unsafe {

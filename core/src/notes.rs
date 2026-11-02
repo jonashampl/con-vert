@@ -38,14 +38,43 @@ fn model() -> Option<&'static Model> {
         .as_ref()
 }
 
+/// A low note's 5th harmonic, two octaves and a major third up: loud in distorted 808s, and
+/// the model hears it as a note, which turned minor beats major. Taken off frame by frame.
+/// Measured on 33 of a producer's own beats and 262 kit loops: 58% -> 67% and 53% -> 55%
+/// keys right (with MINOR_LEAN 2), neither set worse.
+const OVERTONE: usize = 28;
+/// Only notes below this (C4) count as its source: basses and 808s.
+const BASS_BELOW: usize = 60;
+
 /// How strongly each pitch class (0 = C) sounds across `x` (mono, 22050 Hz), summed over
 /// active notes. None if the model can't run or hears no notes.
 pub fn chroma(x: &[f32]) -> Option<[f32; 12]> {
+    let mut out = [0.0f32; 12];
+    for frame in activations(x)? {
+        let mut notes = frame;
+        for k in 0..BASS_BELOW - 21 {
+            if frame[k] > ACTIVE {
+                if let Some(h) = notes.get_mut(k + OVERTONE) {
+                    *h = (*h - frame[k]).max(0.0);
+                }
+            }
+        }
+        for (k, v) in notes.into_iter().enumerate() {
+            if v > ACTIVE {
+                out[(21 + k) % 12] += v;
+            }
+        }
+    }
+    (out.iter().sum::<f32>() > 1.0).then_some(out)
+}
+
+/// The model's note activations (0..1) per frame, for the 88 piano keys from A0.
+pub fn activations(x: &[f32]) -> Option<Vec<[f32; 88]>> {
     let model = model()?;
     let x = &x[..x.len().min(MAX_SAMPLES)];
     let mut padded = vec![0.0f32; PAD];
     padded.extend_from_slice(x);
-    let mut out = [0.0f32; 12];
+    let mut out = Vec::new();
     let mut start = 0;
     while start < x.len() + PAD {
         let mut win = vec![0.0f32; WINDOW];
@@ -57,16 +86,11 @@ pub fn chroma(x: &[f32]) -> Option<[f32; 12]> {
         let notes = result.get(1)?.to_plain_array_view::<f32>().ok()?;
         let frames = notes.shape().get(1).copied()?;
         for f in EDGE_FRAMES..frames.saturating_sub(EDGE_FRAMES) {
-            for k in 0..88 {
-                let v = notes[[0, f, k]];
-                if v > ACTIVE {
-                    out[(21 + k) % 12] += v;
-                }
-            }
+            out.push(std::array::from_fn(|k| notes[[0, f, k]]));
         }
         start += HOP;
     }
-    (out.iter().sum::<f32>() > 1.0).then_some(out)
+    Some(out)
 }
 
 #[cfg(test)]

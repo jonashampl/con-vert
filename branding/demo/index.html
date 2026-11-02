@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>con/vert demo</title>
+<!-- README demo concepts. Open as is to compare; add ?scene=a|b|c for one scene filling the
+     window (that is what gets recorded into the README GIF). -->
+<style>
+  :root { --blue: #0a84ff; --blue-fill: #0068e0; --ink: #f5f5f7; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0a0b0e; color: #e9e9ee; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 40px 20px 64px; }
+  .intro { color: #8d8d98; font-size: 13.5px; margin: 0 0 28px; }
+  section { margin: 0 0 48px; }
+  .meta { display: flex; gap: 12px; align-items: baseline; margin: 0 0 12px; }
+  .meta b { font-size: 16px; font-weight: 650; }
+  .meta span { color: #8d8d98; font-size: 13.5px; }
+  .frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #000;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 24px 60px rgba(0,0,0,.55); }
+  body.solo main { max-width: none; padding: 0; }
+  body.solo .intro, body.solo .meta { display: none; }
+  body.solo section { margin: 0; }
+  body.solo section:not(.on) { display: none; }
+  body.solo .frame { border-radius: 0; box-shadow: none; width: 100vw; height: 100vh; aspect-ratio: auto; }
+
+  .stage { position: absolute; left: 0; top: 0; width: 960px; height: 540px; transform-origin: 0 0; overflow: hidden; }
+  .fade { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; z-index: 50; }
+
+  /* ---------- shared: cursor, keycap, ring, card ---------- */
+  .cursor { position: absolute; left: 0; top: 0; width: 26px; height: 26px; z-index: 40; pointer-events: none; will-change: transform; }
+  .cursor svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.45)); transform-origin: 2px 2px; transition: transform 90ms ease-out; }
+  .cursor.down svg { transform: scale(.9); }
+  .ripple { position: absolute; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; border: 2px solid rgba(255,255,255,.7); z-index: 39; pointer-events: none; animation: ripple 420ms ease-out forwards; }
+  @keyframes ripple { from { transform: scale(.3); opacity: .9; } to { transform: scale(1.2); opacity: 0; } }
+
+
+  .ring { position: absolute; width: 384px; height: 384px; transform-origin: 0 0; z-index: 30; pointer-events: none; opacity: 0; }
+  .ring.show { opacity: 1; }
+  .ring .in { position: absolute; inset: 0; filter: drop-shadow(0 10px 24px rgba(0,0,0,.4)); }
+  .ring.pop .in { animation: ring-in 170ms cubic-bezier(.2,.9,.3,1.15); }
+  .ring.out .in { animation: ring-out 170ms ease-in forwards; }
+  @keyframes ring-in { from { opacity: 0; transform: scale(.86) rotate(-6deg); } }
+  @keyframes ring-out { to { opacity: 0; transform: scale(.94); } }
+  .ring .glass { position: absolute; left: 12px; top: 12px; width: 360px; height: 360px; border-radius: 50%;
+    backdrop-filter: blur(12px) saturate(1.5) brightness(.9); -webkit-backdrop-filter: blur(12px) saturate(1.5) brightness(.9); }
+  .ring svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .ring .tint { fill: rgba(38,38,42,.42); }
+  .ring .rim { fill: none; stroke: rgba(255,255,255,.16); }
+  .ring .petals { transform-box: view-box; transform-origin: 192px 192px; }
+  .ring .petals.flip { animation: petals-in 190ms ease-out; }
+  @keyframes petals-in { from { opacity: 0; transform: rotate(-12deg) scale(.96); } }
+  .ring .petal { opacity: .62; transform-box: view-box; transform-origin: 192px 192px; transition: transform 110ms ease-out, opacity 110ms; }
+  .ring .petal > path { fill: #55555c; stroke: #55555c; stroke-width: 24; stroke-linejoin: round; transition: fill 110ms, stroke 110ms; }
+  .ring .petal.hot { opacity: 1; transform: scale(1.04); }
+  .ring .petal.chosen { animation: chosen 180ms ease-out; }
+  @keyframes chosen { 50% { transform: scale(1.09); } }
+  .ring .label { fill: var(--ink); font-weight: 650; }
+  .ring .label.format { font-size: 15px; letter-spacing: .02em; }
+  .ring .label.tool { font-size: 12px; letter-spacing: .01em; }
+  .ring .icon { color: var(--ink); }
+  .ring .hub { fill: rgba(22,22,26,.88); stroke: var(--blue); stroke-width: 2; }
+  .ring .vinyl { transform-box: fill-box; transform-origin: center; animation: spin 3.2s linear infinite; filter: drop-shadow(0 2px 4px rgba(0,0,0,.45)); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .ring .pill { position: absolute; left: 192px; top: 192px; transform: translate(-50%, -50%); max-width: 150px; white-space: nowrap; padding: 5px 13px; border-radius: 999px;
+    background: rgba(242,242,247,.92); color: #1c1c1e; font-size: 11.5px; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,.35); transition: background 110ms, color 110ms; }
+  .ring .pill.action { background: var(--blue-fill); color: #fff; font-weight: 700; }
+  .ring .hint { position: absolute; left: 147px; top: 212px; width: 90px; text-align: center; font-size: 10px; line-height: 1.25; font-weight: 500; color: rgba(235,235,245,.86); }
+
+  .dd { position: absolute; z-index: 41; left: 0; top: 0; padding: 3px 8px 3px 6px; border-radius: 4px; background: rgba(250,250,252,.96); color: #1b1b1f; font-size: 12px; white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0,0,0,.35); opacity: 0; transition: opacity 110ms; pointer-events: none; }
+  .dd i { font-style: normal; color: var(--blue-fill); font-weight: 700; margin-right: 4px; }
+  .dd.on { opacity: 1; }
+
+  .card { position: absolute; z-index: 35; width: 300px; padding: 12px 14px 13px; border-radius: 14px; background: rgba(30,30,34,.62); border: 1px solid rgba(255,255,255,.14);
+    box-shadow: 0 10px 26px rgba(0,0,0,.4); color: #f2f2f7; font-size: 13px; backdrop-filter: blur(14px) saturate(1.6) brightness(.85); -webkit-backdrop-filter: blur(14px) saturate(1.6) brightness(.85);
+    opacity: 0; transform: translateY(6px) scale(.97); transition: opacity 160ms ease-out, transform 200ms cubic-bezier(.2,.9,.3,1.15); }
+  .card.on { opacity: 1; transform: none; }
+  .card .head { display: flex; align-items: center; gap: 8px; }
+  .card .badge { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--blue-fill); color: #fff; flex: none; transition: background 160ms; }
+  .card .badge svg { width: 14px; height: 14px; }
+  .card.done .badge { background: #30d158; color: #05290f; }
+  .card .spin { animation: spin .9s linear infinite; }
+  .card .title { font-weight: 600; font-size: 13.5px; }
+  .card .detail { margin: 6px 0 0 30px; color: rgba(235,235,245,.62); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .bar { height: 5px; margin: 10px 0 0 30px; border-radius: 3px; background: rgba(255,255,255,.14); overflow: hidden; }
+  .card .bar > div { height: 100%; width: 0; border-radius: 3px; background: var(--blue); }
+  .card .reveal { display: none; margin: 10px 0 0 30px; padding: 5px 12px; border-radius: 999px; background: var(--blue-fill); color: #fff; font-size: 12px; font-weight: 650; width: max-content; }
+  .card.done .bar { display: none; }
+  .card.done .reveal { display: block; }
+
+  /* ---------- A: desktop ---------- */
+  .wall { position: absolute; inset: 0;
+    background:
+      radial-gradient(55% 75% at 80% 22%, #23457e 0%, rgba(35,69,126,0) 62%),
+      radial-gradient(45% 60% at 18% 92%, #2a2468 0%, rgba(42,36,104,0) 66%),
+      radial-gradient(38% 46% at 58% 88%, #0f5560 0%, rgba(15,85,96,0) 70%),
+      radial-gradient(30% 40% at 40% 30%, #16233f 0%, rgba(22,35,63,0) 70%),
+      radial-gradient(20% 30% at 93% 78%, #1d8a6c 0%, rgba(29,138,108,0) 72%),
+      #0a0d16; }
+  .wall::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(115deg, rgba(255,255,255,.012) 0 2px, transparent 2px 9px); }
+  .taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: 36px; background: rgba(18,20,28,.74); border-top: 1px solid rgba(255,255,255,.07);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); display: flex; align-items: center; justify-content: center; gap: 8px; z-index: 5; }
+  .taskbar i { width: 21px; height: 21px; border-radius: 6px; background: rgba(255,255,255,.1); }
+  .taskbar i:first-child { background: rgba(10,132,255,.55); }
+  .dicon { position: absolute; width: 76px; padding: 5px 3px 4px; border-radius: 5px; text-align: center; border: 1px solid transparent; z-index: 10; transition: background 90ms, border-color 90ms, opacity 200ms; }
+  .dicon svg { display: block; width: 38px; height: 38px; margin: 0 auto 3px; }
+  .dicon span { display: block; font-size: 11px; line-height: 1.3; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.9), 0 0 6px rgba(0,0,0,.5); word-break: break-word; }
+  .dicon.sel { background: rgba(90,150,255,.24); border-color: rgba(140,185,255,.55); }
+  .dicon.new { animation: newfile 520ms cubic-bezier(.2,.9,.3,1.25); }
+  @keyframes newfile { from { opacity: 0; transform: scale(.6); } }
+  .ghost { position: absolute; left: 0; top: 0; width: 38px; height: 38px; z-index: 38; opacity: .8; pointer-events: none; will-change: transform; filter: drop-shadow(0 8px 14px rgba(0,0,0,.45)); }
+  .ghost svg { width: 100%; height: 100%; display: block; }
+  /* The floating icon: liquid glass over whatever is behind it, like the real widget. */
+  .glassicon { position: absolute; width: 40px; height: 40px; border-radius: 9px; overflow: hidden; z-index: 8;
+    background: linear-gradient(135deg, rgba(255,255,255,.26), rgba(255,255,255,.05) 46%, rgba(255,255,255,.12));
+    backdrop-filter: blur(5px) saturate(2.1) brightness(1.3); -webkit-backdrop-filter: blur(5px) saturate(2.1) brightness(1.3);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.34), inset 0 1px 1px rgba(255,255,255,.7), 0 6px 16px rgba(0,0,0,.35);
+    transition: transform 180ms cubic-bezier(.2,.9,.3,1.35); }
+  .glassicon svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .glassicon.perk { transform: scale(1.14); }
+  /* Where the icon sits when the ring opens over it, as the app marks it. */
+  .spot { position: absolute; width: 48px; height: 48px; margin: -24px 0 0 -24px; border-radius: 50%; z-index: 32; pointer-events: none; opacity: 0;
+    background: rgba(22,22,26,.88); box-shadow: inset 0 0 0 2.5px var(--blue); transition: opacity 140ms; }
+  .spot.on { opacity: 1; animation: spot 1.1s ease-in-out infinite alternate; }
+  .spot svg { position: absolute; left: 11px; top: 11px; width: 26px; height: 26px; }
+  @keyframes spot { to { transform: scale(1.08); box-shadow: inset 0 0 0 4px var(--blue); } }
+  .ring .thumb { filter: drop-shadow(0 2px 4px rgba(0,0,0,.35)); }
+
+  /* ---------- C: tour ---------- */
+  .c-wall { position: absolute; inset: 0;
+    background: radial-gradient(38% 60% at 31% 50%, #1c3a73 0%, rgba(28,58,115,0) 70%), radial-gradient(30% 50% at 22% 78%, #2c2063 0%, rgba(44,32,99,0) 70%), #07080c; }
+  .cap { position: absolute; left: 590px; top: 182px; width: 330px; }
+  .cap .over { font-size: 13px; color: #8d8f9b; letter-spacing: .04em; margin: 0 0 10px; }
+  .cap h2 { margin: 0 0 10px; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; font-size: 38px; font-weight: 650; letter-spacing: -.015em; color: #f5f5f7; }
+  .cap p { margin: 0; font-size: 17px; line-height: 1.45; color: #a8aab6; }
+  .cap .swap { transition: opacity 180ms ease-out, transform 220ms cubic-bezier(.2,.9,.3,1.1); }
+  .cap .swap.hide { opacity: 0; transform: translateY(8px); }
+  .dots { display: flex; gap: 7px; margin: 26px 0 0; }
+  .dots i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.18); transition: background 160ms, width 200ms; }
+  .dots i.on { background: var(--blue); width: 20px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <p class="intro">con/vert · README demo concepts. Each one loops.</p>
+
+  <section id="a">
+    <div class="meta"><b>A · Audio</b><span>A WAV dropped on the glass icon becomes an MP3.</span></div>
+    <div class="frame"><div class="stage"></div></div>
+  </section>
+
+  <section id="b">
+    <div class="meta"><b>B · Images</b><span>A photo dropped on the glass icon becomes a JPG.</span></div>
+    <div class="frame"><div class="stage"></div></div>
+  </section>
+
+  <section id="c">
+    <div class="meta"><b>C · Ring tour</b><span>Every action, one by one, the way the ring shows it.</span></div>
+    <div class="frame"><div class="stage"></div></div>
+  </section>
+</main>
+
+<script>
+
+// ---------- timing ----------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const minJerk = (t) => t * t * t * (10 - 15 * t + 6 * t * t);
+// Hands speed up quickly and settle slowly onto a target.
+const human = (t) => minJerk(Math.pow(t, 0.8));
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+function tween(ms, fn, ease = minJerk) {
+  return new Promise((done) => {
+    const t0 = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms);
+      fn(ease(t));
+      t < 1 ? requestAnimationFrame(step) : done();
+    };
+    requestAnimationFrame(step);
+  });
+}
+function rng(seed) {
+  return () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e; };
+
+// ---------- cursor with human motion ----------
+const ARROW = '<svg viewBox="0 0 24 24"><path d="M2 2 L2 19.2 L6.4 15.1 L9.3 21.6 L12.2 20.4 L9.4 14 L15.4 14 Z" fill="#fff" stroke="#111" stroke-width="1.25" stroke-linejoin="round"/></svg>';
+
+class Hand {
+  constructor(stage, seed) {
+    this.stage = stage;
+    this.r = rng(seed);
+    this.el = el("div", "cursor", ARROW);
+    stage.append(this.el);
+    this.x = -40; this.y = -40;
+    this.ghost = null;
+    this.g = { x: 0, y: 0, vx: 0, vy: 0 };
+    this.onMove = null;
+    let last = performance.now();
+    const frame = (now) => {
+      const dt = Math.min(48, now - last) / 16.67;
+      last = now;
+      this.el.style.transform = `translate(${this.x - 2}px, ${this.y - 2}px)`;
+      if (this.ghost) {
+        // The dragged file trails the pointer on a soft spring and leans into the motion.
+        const g = this.g, tx = this.x - 12, ty = this.y - 8;
+        g.vx += (tx - g.x) * 0.38 * dt; g.vy += (ty - g.y) * 0.38 * dt;
+        const damp = Math.pow(0.42, dt);
+        g.vx *= damp; g.vy *= damp;
+        g.x += g.vx * dt; g.y += g.vy * dt;
+        const tilt = Math.max(-10, Math.min(10, g.vx * 1.1));
+        this.ghost.style.transform = `translate(${g.x}px, ${g.y}px) rotate(${tilt}deg)`;
+      }
+      if (this.onMove) this.onMove(this.x, this.y);
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+  place(x, y) { this.x = x; this.y = y; }
+  // A curved path, a speed that rises fast and falls slowly, and a small overshoot that
+  // gets corrected: what a hand on a mouse does, not a straight line at constant speed.
+  async move(x, y, o = {}) {
+    const x0 = this.x, y0 = this.y, dx = x - x0, dy = y - y0, d = Math.hypot(dx, dy);
+    if (d < 1) return;
+    const r = this.r;
+    const dur = (o.ms || 240 + 165 * Math.log2(d / 18 + 1)) * (o.slow || 1) * (0.92 + 0.16 * r());
+    const nx = -dy / d, ny = dx / d;
+    const bend = (r() * 2 - 1) * Math.min(70, 0.17 * d) + (o.bend || 0);
+    const over = o.exact ? 0 : Math.min(10, d * 0.035) * (0.45 + 0.55 * r());
+    const ex = x + (dx / d) * over + nx * over * 0.3, ey = y + (dy / d) * over + ny * over * 0.3;
+    const c1x = x0 + dx * 0.3 + nx * bend, c1y = y0 + dy * 0.3 + ny * bend;
+    const c2x = x0 + dx * 0.74 + nx * bend * 0.4, c2y = y0 + dy * 0.74 + ny * bend * 0.4;
+    await tween(dur, (t) => {
+      const u = 1 - t;
+      this.x = u * u * u * x0 + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * ex;
+      this.y = u * u * u * y0 + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * ey;
+    }, human);
+    if (over > 0.6) await tween(120 + r() * 80, (t) => { this.x = ex + (x - ex) * t; this.y = ey + (y - ey) * t; }, easeOut);
+  }
+  down(on) { this.el.classList.toggle("down", on); }
+  ripple() { const p = el("div", "ripple"); p.style.left = this.x + "px"; p.style.top = this.y + "px"; this.stage.append(p); setTimeout(() => p.remove(), 450); }
+  grab(node) { this.ghost = node; this.g = { x: this.x - 24, y: this.y - 24, vx: 0, vy: 0 }; this.stage.append(node); }
+  drop() { const g = this.ghost; this.ghost = null; return g; }
+}
+
+// ---------- the ring (same geometry and look as app/src/Ring.tsx) ----------
+const C = 192, R = 180, HUB = 0.34 * R, PIN = 0.4 * R, POUT = 0.93 * R, CORNER = 12, GAP = 7;
+const pt = (r, a) => `${(C + r * Math.sin(a)).toFixed(2)} ${(C - r * Math.cos(a)).toFixed(2)}`;
+function petalPath(i, n) {
+  const mid = (i * 2 * Math.PI) / n, half = Math.PI / n, inset = GAP / 2 + CORNER;
+  const ri = PIN + CORNER, ro = POUT - CORNER;
+  const ai = Math.asin(Math.min(1, inset / ri)), ao = Math.asin(Math.min(1, inset / ro));
+  return `M ${pt(ri, mid - half + ai)} L ${pt(ro, mid - half + ao)} A ${ro} ${ro} 0 0 1 ${pt(ro, mid + half - ao)} L ${pt(ri, mid + half - ai)} A ${ri} ${ri} 0 0 0 ${pt(ri, mid - half + ai)} Z`;
+}
+// Lucide line icons (ISC), as the app uses.
+const LUCIDE = {
+  archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+  shrink: '<path d="m15 15 6 6m-6-6v4.8m0-4.8h4.8"/><path d="M9 19.8V15m0 0H4.2M9 15l-6 6"/><path d="M15 4.2V9m0 0h4.8M15 9l6-6"/><path d="M9 4.2V9m0 0H4.2M9 9 3 3"/>',
+  imageDown: '<path d="M10.3 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10l-3.1-3.1a2 2 0 0 0-2.814.014L6 21"/><path d="m14 19 3 3v-5.5"/><path d="m17 22 3-3"/><circle cx="9" cy="9" r="2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  loader: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+};
+const lucide = (name, extra = "") => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" ${extra}>${LUCIDE[name]}</svg>`;
+
+const CONVERT = ["MP3", "FLAC", "M4A", "OGG", "OPUS", "AAC"].map((l) => ({ label: l }));
+const TOOLS = [
+  { label: "Zip", icon: "archive", hint: "Pack them into one ZIP" },
+  { label: "BPM + Key", icon: "gauge", hint: "Copy named with BPM + key" },
+  { label: "Compress", icon: "shrink", hint: "Smaller file, same format" },
+  { label: "Cover", icon: "imageDown", hint: "Save album art as JPG" },
+];
+
+let ringId = 0;
+class Ring {
+  // `thumb`: an image file's picture for the hub; without one the hub spins a record (audio).
+  constructor(stage, size, thumb) {
+    this.k = size / 384;
+    this.id = "hot" + ringId++;
+    this.el = el("div", "ring");
+    const t = HUB * 1.24;
+    const hub = thumb
+      ? `<g class="thumb" clip-path="url(#hc${this.id})"><svg x="${C - t / 2}" y="${C - HUB * 0.78}" width="${t}" height="${t * 0.75}" viewBox="0 0 60 45">${thumb}</svg></g>`
+      : `<g class="vinyl">${this.vinyl()}</g>`;
+    this.el.innerHTML = `<div class="in"><div class="glass"></div><svg viewBox="0 0 384 384">
+      <defs><linearGradient id="${this.id}" gradientUnits="userSpaceOnUse" x1="0" y1="12" x2="0" y2="372"><stop offset="0" stop-color="#1a6fef"/><stop offset="1" stop-color="#0058d6"/></linearGradient>
+        <clipPath id="hc${this.id}"><circle cx="${C}" cy="${C}" r="${HUB - 1}"/></clipPath></defs>
+      <circle class="tint" cx="192" cy="192" r="180"/><circle class="rim" cx="192" cy="192" r="179.25"/>
+      <g class="petals"></g>
+      <circle class="hub" cx="192" cy="192" r="${HUB}"/>
+      ${hub}</svg>
+      <div class="pill"></div><div class="hint"></div></div>`;
+    this.petals = this.el.querySelector(".petals");
+    this.pillEl = this.el.querySelector(".pill");
+    this.hintEl = this.el.querySelector(".hint");
+    stage.append(this.el);
+    this.hover = -1;
+    this.isOpen = false;
+  }
+  vinyl() {
+    const r = HUB * 0.5, cy = C - HUB * 0.3;
+    return `<circle cx="${C}" cy="${cy}" r="${r}" fill="#0d0d10"/>` +
+      [0.84, 0.68].map((k) => `<circle cx="${C}" cy="${cy}" r="${r * k}" fill="none" stroke="rgba(255,255,255,.09)"/>`).join("") +
+      `<path d="M ${C} ${cy - r * 0.92} A ${r * 0.92} ${r * 0.92} 0 0 1 ${C + r * 0.86} ${cy - r * 0.33}" fill="none" stroke="rgba(255,255,255,.24)" stroke-width="2" stroke-linecap="round"/>` +
+      `<circle cx="${C}" cy="${cy}" r="${r * 0.37}" fill="#0a84ff"/><circle cx="${C}" cy="${cy}" r="${r * 0.08}" fill="#0d0d10"/>`;
+  }
+  segs(list, flip) {
+    this.list = list;
+    const n = list.length, mr = (PIN + POUT) / 2;
+    this.petals.innerHTML = list.map((s, i) => {
+      const a = (i * 2 * Math.PI) / n, x = C + mr * Math.sin(a), y = C - mr * Math.cos(a);
+      const label = s.icon
+        ? `<svg class="icon" x="${x - 9}" y="${y - 19}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${LUCIDE[s.icon]}</svg>
+           <text class="label tool" x="${x}" y="${y + 11}" text-anchor="middle" dominant-baseline="central">${s.label}</text>`
+        : `<text class="label format" x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central">${s.label}</text>`;
+      return `<g class="petal"><path d="${petalPath(i, n)}"/>${label}</g>`;
+    }).join("");
+    if (flip) { this.petals.classList.remove("flip"); void this.petals.getBBox(); this.petals.classList.add("flip"); }
+    this.hover = -1;
+    this.paint();
+  }
+  title(t) { this.titleText = t; this.paint(); }
+  at(x, y) {
+    this.cx = x; this.cy = y;
+    this.el.style.left = x - 192 * this.k + "px";
+    this.el.style.top = y - 192 * this.k + "px";
+    this.el.style.transform = `scale(${this.k})`;
+  }
+  open(x, y, list, title) {
+    this.at(x, y);
+    this.titleText = title;
+    this.segs(list);
+    this.el.classList.remove("out", "pop");
+    void this.el.offsetWidth;
+    this.el.classList.add("show", "pop");
+    this.isOpen = true;
+  }
+  // Which petal a stage point is over, as the app's hit-testing does.
+  track(x, y) {
+    if (!this.isOpen) return -1;
+    const dx = (x - this.cx) / this.k, dy = (y - this.cy) / this.k, d = Math.hypot(dx, dy);
+    let i = -1;
+    if (d > HUB && d < R) {
+      const n = this.list.length;
+      const a = (Math.atan2(dx, -dy) + 2 * Math.PI) % (2 * Math.PI);
+      i = Math.round(a / ((2 * Math.PI) / n)) % n;
+    }
+    if (i !== this.hover) { this.hover = i; this.paint(); }
+    return i;
+  }
+  paint() {
+    [...this.petals.children].forEach((g, i) => g.classList.toggle("hot", i === this.hover));
+    this.petals.querySelectorAll(".petal.hot > path").forEach((p) => { p.style.fill = `url(#${this.id})`; p.style.stroke = `url(#${this.id})`; });
+    this.petals.querySelectorAll(".petal:not(.hot) > path").forEach((p) => { p.style.fill = ""; p.style.stroke = ""; });
+    const s = this.hover >= 0 ? this.list[this.hover] : null;
+    this.pillEl.textContent = s ? s.label : this.titleText || "";
+    this.pillEl.classList.toggle("action", !!s);
+    this.hintEl.textContent = s && s.hint ? s.hint : "";
+  }
+  async choose() {
+    const g = this.petals.children[this.hover];
+    if (g) g.classList.add("chosen");
+    await sleep(170);
+    this.close();
+  }
+  close() {
+    this.isOpen = false;
+    this.el.classList.remove("pop");
+    this.el.classList.add("out");
+    setTimeout(() => { this.el.classList.remove("show", "out"); this.hover = -1; }, 180);
+  }
+}
+
+// ---------- result card ----------
+function makeCard(stage) {
+  const c = el("div", "card", `<div class="head"><div class="badge"></div><div class="title"></div></div><div class="detail"></div><div class="bar"><div></div></div><div class="reveal">Show in folder</div>`);
+  stage.append(c);
+  return c;
+}
+
+// A file icon on the desktop: a page with a format band; audio shows a waveform, PDF text lines.
+const fileIcon = (ext) => `<svg viewBox="0 0 48 48"><path d="M11 3.5h18.5L39 13v30a1.5 1.5 0 0 1-1.5 1.5h-26A1.5 1.5 0 0 1 10 43V5a1.5 1.5 0 0 1 1-1.5z" fill="#eef1f7"/><path d="M29.5 3.5V12a1 1 0 0 0 1 1H39" fill="#cfd6e4"/>
+  ${ext === "PDF"
+    ? `<g fill="#b8c0cf">${[14, 18, 22, 26].map((y, i) => `<rect x="15" y="${y}" width="${i === 3 ? 12 : 19}" height="1.8" rx=".9"/>`).join("")}</g>`
+    : `<g fill="#0a84ff">${[4, 9, 13, 7, 11, 5, 8].map((h, i) => `<rect x="${14.5 + i * 3}" y="${22 - h / 2}" width="1.8" height="${h}" rx=".9"/>`).join("")}</g>`}
+  <rect x="10" y="33" width="29" height="10" fill="${{ MP3: "#5e5ce6", PDF: "#d93a3a" }[ext] || "#0068e0"}"/><text x="24.5" y="40.6" fill="#fff" font-size="7.5" font-weight="700" text-anchor="middle" font-family="Segoe UI, sans-serif">${ext}</text></svg>`;
+
+function fit(stage) {
+  const frame = stage.parentElement;
+  const s = Math.min(frame.clientWidth / 960, frame.clientHeight / 540);
+  stage.style.transform = `translate(${(frame.clientWidth - 960 * s) / 2}px, ${(frame.clientHeight - 540 * s) / 2}px) scale(${s})`;
+}
+
+async function fadeLoop(stage, body) {
+  const f = el("div", "fade");
+  stage.append(f);
+  for (let round = 1; ; round++) {
+    await body(round);
+    await tween(380, (t) => (f.style.opacity = t), easeOut);
+    stage.dispatchEvent(new Event("reset"));
+    await sleep(120);
+    tween(420, (t) => (f.style.opacity = 1 - t), easeOut);
+  }
+}
+
+// The con/vert mark (app/public/icon.svg) in white, for the glass icon and its marker.
+let markId = 0;
+function mark() {
+  const id = "m" + markId++;
+  return `<svg viewBox="0 0 100 100"><defs><clipPath id="tl${id}"><polygon points="0,0 95,0 0,95"/></clipPath><clipPath id="br${id}"><polygon points="100,5 100,100 5,100"/></clipPath></defs>
+    <line x1="-2" y1="101" x2="101" y2="-2" stroke="#fff" stroke-opacity=".6" stroke-width="1.2"/>
+    <g fill="#fff"><g clip-path="url(#tl${id})"><rect x="16.5" y="31" width="40" height="38" rx="10" fill="none" stroke="#fff" stroke-width="5"/>
+    <path d="M 33 44.2 Q 33 41.9 35 43 L 43 47.9 Q 44.9 49.2 43 50.4 L 35 55.3 Q 33 56.5 33 54.2 Z"/></g>
+    <g clip-path="url(#br${id})"><rect x="58" y="34" width="5.4" height="32" rx="2.7"/><rect x="66.5" y="27" width="5.4" height="46" rx="2.7"/>
+    <rect x="75" y="37" width="5.4" height="26" rx="2.7"/><rect x="83.5" y="43" width="5.4" height="14" rx="2.7"/></g></g></svg>`;
+}
+
+// A made-up photo (sunset over hills), drawn in a 60 x 45 box.
+let photoId = 0;
+function photoArt() {
+  const id = "p" + photoId++;
+  return `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b2a6e"/><stop offset=".55" stop-color="#c2417a"/><stop offset="1" stop-color="#ff9a5a"/></linearGradient></defs>
+    <rect width="60" height="45" fill="url(#${id})"/><circle cx="38" cy="27" r="7" fill="#ffd27a"/>
+    <path d="M0 34 L12 26 L22 31 L33 22 L46 32 L60 25 V45 H0 Z" fill="#2c2752"/><path d="M0 40 L15 33 L30 38 L44 31 L60 37 V45 H0 Z" fill="#191733"/>`;
+}
+// Explorer shows pictures as their thumbnail with a thin white frame.
+const photoIcon = () => `<svg viewBox="0 0 48 48"><rect x="2" y="8" width="44" height="33" fill="#fff"/><svg x="3" y="9" width="42" height="31" viewBox="0 0 60 45" preserveAspectRatio="xMidYMid slice">${photoArt()}</svg></svg>`;
+
+const IMAGE_TARGETS = ["JPG", "WEBP", "HEIC", "TIFF", "AVIF", "BMP", "PDF", "DOCX"].map((l) => ({ label: l }));
+
+// One file dragged onto the glass icon, the ring opens there, the file lands on a petal.
+function desktopScene(stage, cfg) {
+  stage.innerHTML = `<div class="wall"></div><div class="taskbar"><i></i><i></i><i></i><i></i><i></i></div>`;
+  const icons = cfg.files.map((f, n) => {
+    const d = el("div", "dicon", f.icon() + `<span>${f.name}</span>`);
+    d.style.left = "20px"; d.style.top = 20 + n * 84 + "px";
+    stage.append(d);
+    return d;
+  });
+  const ICON = { x: 876, y: 424 };
+  const widget = el("div", "glassicon", mark());
+  widget.style.left = ICON.x + "px"; widget.style.top = ICON.y + "px";
+  stage.append(widget);
+  const spot = el("div", "spot", mark());
+  stage.append(spot);
+  const ring = new Ring(stage, 300, cfg.thumb);
+  const card = makeCard(stage);
+  const dd = el("div", "dd"); stage.append(dd);
+  const hand = new Hand(stage, cfg.seed);
+  let dragging = false, made = null;
+  hand.onMove = (x, y) => {
+    if (dragging && ring.isOpen) {
+      const i = ring.track(x, y);
+      dd.innerHTML = i >= 0 ? `<i>+</i>${ring.list[i].label}` : "";
+      dd.classList.toggle("on", i >= 0);
+    }
+    dd.style.transform = `translate(${x + 14}px, ${y + 24}px)`;
+  };
+  stage.addEventListener("reset", () => {
+    icons.forEach((d) => d.classList.remove("sel"));
+    card.className = "card";
+    widget.classList.remove("perk");
+    if (made) { made.remove(); made = null; }
+    hand.place(640, 300);
+  });
+  stage.dispatchEvent(new Event("reset"));
+
+  const pick = icons[0], cx = ICON.x + 20, cy = ICON.y + 20;
+  fadeLoop(stage, async () => {
+    await sleep(500);
+    await hand.move(57, 42);
+    await sleep(240);
+    hand.down(true);
+    pick.classList.add("sel");
+    await sleep(150);
+    hand.grab(el("div", "ghost", cfg.files[0].icon()));
+    dragging = true;
+    // Across the desktop, a short hesitation, then onto the glass icon.
+    await hand.move(560, 300, { slow: 1.2, bend: -40 });
+    await sleep(180);
+    await hand.move(cx - 2, cy + 1, { slow: 1.1 });
+    widget.classList.add("perk");
+    await sleep(140);
+    // The ring opens on the icon, pushed in to fit the screen; the marker shows where the icon is.
+    const r = 180 * ring.k;
+    const rx = Math.min(cx, 960 - r - 10), ry = Math.min(cy, 540 - 36 - r - 8);
+    ring.open(rx, ry, cfg.list, cfg.title);
+    spot.style.left = cx + "px"; spot.style.top = cy + "px";
+    spot.classList.add("on");
+    await sleep(700);
+    const a = (cfg.target * 2 * Math.PI) / cfg.list.length, mr = ((PIN + POUT) / 2) * ring.k;
+    await hand.move(rx + mr * Math.sin(a), ry - mr * Math.cos(a) + 4, { slow: 1.15 });
+    await sleep(560);
+    // Let go on the petal.
+    hand.down(false);
+    dragging = false;
+    dd.classList.remove("on");
+    const g = hand.drop();
+    g.style.transition = "opacity 140ms";
+    g.style.opacity = "0";
+    setTimeout(() => g.remove(), 160);
+    spot.classList.remove("on");
+    widget.classList.remove("perk");
+    await ring.choose();
+    pick.classList.remove("sel");
+    // The card beside the drop point: working, then saved.
+    card.style.left = Math.max(20, hand.x - 330) + "px";
+    card.style.top = Math.min(370, hand.y + 20) + "px";
+    card.querySelector(".badge").innerHTML = lucide("loader", 'class="spin" stroke-width="2.4"');
+    card.querySelector(".title").textContent = cfg.working;
+    card.querySelector(".detail").textContent = cfg.files[0].name;
+    const bar = card.querySelector(".bar > div");
+    bar.style.width = "0";
+    card.classList.add("on");
+    hand.move(hand.x - 60, hand.y - 90, { slow: 1.6 });
+    await tween(1300, (t) => (bar.style.width = t * 100 + "%"), (t) => 1 - Math.pow(1 - t, 1.6));
+    card.classList.add("done");
+    card.querySelector(".badge").innerHTML = lucide("check", 'stroke-width="2.8"');
+    card.querySelector(".title").textContent = "Saved";
+    card.querySelector(".detail").textContent = cfg.result.name;
+    made = el("div", "dicon new sel", cfg.result.icon() + `<span>${cfg.result.name}</span>`);
+    made.style.left = "20px"; made.style.top = 20 + cfg.files.length * 84 + "px";
+    stage.append(made);
+    await sleep(2600);
+  });
+}
+
+// ---------- A: a WAV becomes an MP3 ----------
+function sceneA(stage) {
+  desktopScene(stage, {
+    seed: 7,
+    files: [
+      { name: "dark loop.wav", icon: () => fileIcon("WAV") },
+      { name: "kick 808.wav", icon: () => fileIcon("WAV") },
+      { name: "vocal take.wav", icon: () => fileIcon("WAV") },
+    ],
+    list: CONVERT, title: "2.4 MB", target: 0,
+    working: "Converting to MP3",
+    result: { name: "dark loop.mp3", icon: () => fileIcon("MP3") },
+  });
+}
+
+// ---------- B: a photo becomes a JPG ----------
+function sceneB(stage) {
+  desktopScene(stage, {
+    seed: 11,
+    files: [
+      { name: "sunset.png", icon: photoIcon },
+      { name: "cover art.png", icon: photoIcon },
+      { name: "flyer.pdf", icon: () => fileIcon("PDF") },
+    ],
+    list: IMAGE_TARGETS, title: "1.8 MB", target: 0, thumb: photoArt(),
+    working: "Converting to JPG",
+    result: { name: "sunset.jpg", icon: photoIcon },
+  });
+}
+
+// ---------- C: every action in turn ----------
+function sceneC(stage) {
+  const caps = {
+    Zip: "Packs several files into one ZIP.",
+    "BPM + Key": "Saves a copy named with its tempo and key, like dark loop 146 BPM Dphy.",
+    Compress: "A smaller file in the same format. WAV becomes lossless FLAC.",
+    Cover: "Saves a track's album art as a JPG.",
+    MP3: "Converts to MP3. Also WAV, FLAC, M4A, OGG, OPUS and AAC.",
+    FLAC: "Lossless FLAC, for half the size of a WAV.",
+  };
+  const order = ["Zip", "BPM + Key", "Compress", "Cover", "MP3", "FLAC"];
+  stage.innerHTML = `<div class="c-wall"></div>
+    <div class="cap"><div class="over">con/vert</div><div class="swap"><h2></h2><p></p></div><div class="dots">${order.map(() => "<i></i>").join("")}</div></div>`;
+  const ring = new Ring(stage, 340);
+  const swap = stage.querySelector(".swap"), h2 = stage.querySelector(".cap h2"), p = stage.querySelector(".cap p"), dots = [...stage.querySelectorAll(".dots i")];
+  const hand = new Hand(stage, 21);
+  let shown = null;
+  const say = async (label) => {
+    if (label === shown) return;
+    shown = label;
+    swap.classList.add("hide");
+    await sleep(170);
+    h2.textContent = label === "MP3" || label === "FLAC" ? "Convert" : label;
+    p.textContent = caps[label];
+    dots.forEach((d, i) => d.classList.toggle("on", order[i] === label));
+    swap.classList.remove("hide");
+  };
+  hand.onMove = (x, y) => {
+    const i = ring.track(x, y);
+    if (i >= 0) say(ring.list[i].label);
+  };
+  const petal = (i, n) => {
+    const a = (i * 2 * Math.PI) / n, mr = (PIN + POUT) / 2 * ring.k;
+    return [ring.cx + mr * Math.sin(a), ring.cy - mr * Math.cos(a)];
+  };
+  stage.addEventListener("reset", () => {
+    shown = null;
+    swap.classList.add("hide");
+    dots.forEach((d) => d.classList.remove("on"));
+    hand.place(330, 290);
+  });
+  stage.dispatchEvent(new Event("reset"));
+
+  fadeLoop(stage, async () => {
+    ring.open(300, 270, TOOLS, "dark loop.wav");
+    await sleep(700);
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = petal(i, 4);
+      await hand.move(x + (hand.r() - 0.5) * 18, y + (hand.r() - 0.5) * 14);
+      await sleep(1250);
+    }
+    // Click the middle: the conversions.
+    await hand.move(300 + 6, 270 + 22);
+    await sleep(220);
+    hand.down(true); hand.ripple();
+    await sleep(110);
+    hand.down(false);
+    ring.segs(CONVERT, true);
+    await sleep(420);
+    for (const i of [0, 1]) {
+      const [x, y] = petal(i, 6);
+      await hand.move(x + (hand.r() - 0.5) * 14, y + (hand.r() - 0.5) * 10);
+      await sleep(1250);
+    }
+    await hand.move(420, 420, { slow: 1.3 });
+    await sleep(500);
+    ring.close();
+    await sleep(600);
+  });
+}
+
+const solo = new URLSearchParams(location.search).get("scene");
+if (solo) { document.body.classList.add("solo"); document.getElementById(solo)?.classList.add("on"); }
+const scenes = { a: sceneA, b: sceneB, c: sceneC };
+for (const [id, run] of Object.entries(scenes)) {
+  if (solo && solo !== id) continue;
+  const stage = document.querySelector(`#${id} .stage`);
+  fit(stage);
+  new ResizeObserver(() => fit(stage)).observe(stage.parentElement);
+  run(stage);
+}
+</script>
+</body>
+</html>

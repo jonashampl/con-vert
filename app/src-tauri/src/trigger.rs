@@ -53,13 +53,8 @@ const WM_APP_RESET: u32 = WM_APP + 6;
 static ARMED_AT: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 const TIMER_VERIFY: usize = 1;
 const TIMER_HIDE: usize = 2;
-const TIMER_DRAG_WATCH: usize = 3;
 /// Once a second: undo states that can only be stale (see WM_TIMER below).
 const TIMER_WATCHDOG: usize = 5;
-/// While the button is down after a drag starts, how often to check for a file drag, and
-/// how many checks after letting go before the beaver goes back down (the drop lands first).
-const DRAG_WATCH_MS: u32 = 60;
-const DRAG_WATCH_TAIL: u32 = 5;
 const VERIFY_MS: u32 = 2000;
 
 /// Which key combination opens the ring.
@@ -115,8 +110,6 @@ static OVERLAY: AtomicIsize = AtomicIsize::new(0);
 static BUTTON_DOWN: AtomicBool = AtomicBool::new(false);
 /// Button held and moved past the system drag threshold.
 static DRAGGING: AtomicBool = AtomicBool::new(false);
-/// Drag-watch ticks since the button went up.
-static DRAG_TAIL: AtomicU32 = AtomicU32::new(0);
 /// Watchdog: seconds the drop target has been up with no button held, and in click mode.
 static STALE_SECS: AtomicU32 = AtomicU32::new(0);
 static CLICK_SECS: AtomicU32 = AtomicU32::new(0);
@@ -139,10 +132,6 @@ static CLICK_MODE: AtomicBool = AtomicBool::new(false);
 static PENDING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static DOWN_X: AtomicI32 = AtomicI32::new(0);
 static DOWN_Y: AtomicI32 = AtomicI32::new(0);
-/// Thread that owns the window the button went down on: a drag from there runs on it.
-static DOWN_THREAD: AtomicU32 = AtomicU32::new(0);
-/// The button went down on the desktop itself (dragging desktop icons).
-static DOWN_ON_DESKTOP: AtomicBool = AtomicBool::new(false);
 /// The button went down in Explorer (a folder window or the desktop): only drags from there
 /// open the ring on the trigger key. In other apps (FL Studio's browser) Shift means
 /// something of their own; their files can still go onto the icon.
@@ -340,8 +329,7 @@ unsafe fn mouse_hook_body(code: i32, wparam: WPARAM, lparam: LPARAM) {
                 // Which window it went down on is looked up on the trigger thread once a drag
                 // starts: WindowFromPoint can wait on a busy app, and a hook must never wait
                 // (Windows lags all input meanwhile, and drops a hook that is slow too often).
-                DOWN_THREAD.store(0, SeqCst);
-                DOWN_ON_DESKTOP.store(false, SeqCst);
+                DOWN_IN_EXPLORER.store(false, SeqCst);
                 // Re-read the real modifier state each press: if Windows ever skipped a
                 // key-up for this hook, Shift would otherwise stay "held" and taps be ignored.
                 let held = |vk: VIRTUAL_KEY| unsafe { (GetAsyncKeyState(vk.0 as i32) as u16 & 0x8000) != 0 };
@@ -442,7 +430,7 @@ pub(crate) fn hdrop_format() -> FORMATETC {
     }
 }
 
-fn read_paths(obj: &IDataObject) -> Option<Vec<String>> {
+pub(crate) fn read_paths(obj: &IDataObject) -> Option<Vec<String>> {
     unsafe {
         let mut medium = obj.GetData(&hdrop_format()).ok()?;
         let hdrop = HDROP(medium.u.hGlobal.0);
@@ -768,14 +756,6 @@ fn hide() {
     *menu_lock() = None;
 }
 
-/// The desktop (Progman / WorkerW and the icon list inside them).
-fn is_desktop(h: HWND) -> bool {
-    let root = unsafe { GetAncestor(h, GA_ROOT) };
-    let mut name = [0u16; 16];
-    let n = unsafe { GetClassNameW(root, &mut name) } as usize;
-    matches!(String::from_utf16_lossy(&name[..n]).as_str(), "Progman" | "WorkerW")
-}
-
 /// The window belongs to explorer.exe (folder windows and the desktop).
 fn is_explorer(h: HWND) -> bool {
     use windows::Win32::System::Threading::*;
@@ -791,37 +771,6 @@ fn is_explorer(h: HWND) -> bool {
     }
 }
 
-/// True while some app is running an OLE drag-and-drop: its thread hands mouse capture to
-/// OLE's hidden clipboard window for the whole drag. Window moves and text selections don't.
-/// Checks the thread the drag started on (which needn't be the foreground one) and the
-/// foreground thread.
-fn file_drag_under_way() -> bool {
-    let captured_by_ole = |thread: u32| unsafe {
-        let mut info = GUITHREADINFO { cbSize: std::mem::size_of::<GUITHREADINFO>() as u32, ..Default::default() };
-        if GetGUIThreadInfo(thread, &mut info).is_err() || info.hwndCapture.is_invalid() {
-            return false;
-        }
-        let mut name = [0u16; 32];
-        let n = GetClassNameW(info.hwndCapture, &mut name) as usize;
-        String::from_utf16_lossy(&name[..n]) == "CLIPBRDWNDCLASS"
-    };
-    let down = DOWN_THREAD.load(SeqCst);
-    if (down != 0 && captured_by_ole(down)) || captured_by_ole(0) {
-        return true;
-    }
-    // Explorer on Windows 11 runs the drag on a thread of its own, neither of those: look
-    // at every thread with an OLE clipboard window (message-only windows).
-    let mut after = HWND::default();
-    unsafe {
-        while let Ok(w) = FindWindowExW(HWND_MESSAGE, after, w!("CLIPBRDWNDCLASS"), None) {
-            if captured_by_ole(GetWindowThreadProcessId(w, None)) {
-                return true;
-            }
-            after = w;
-        }
-    }
-    false
-}
 
 /// A click on the open ring in click mode: run the petal, or flip pages on the hub.
 fn click_at(x: i32, y: i32) {
@@ -876,7 +825,6 @@ unsafe fn wndproc_body(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             }
             WM_APP_RESET => {
                 let _ = KillTimer(hwnd, TIMER_HIDE);
-                let _ = KillTimer(hwnd, TIMER_DRAG_WATCH);
                 hide();
                 SHOWN.store(false, SeqCst);
                 BUTTON_DOWN.store(false, SeqCst);
@@ -920,26 +868,11 @@ unsafe fn wndproc_body(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 }
                 LRESULT(0)
             }
+            // A drag began: note whether it came from Explorer. The icon is never raised over
+            // windows for it; it stays at desktop level like a desktop icon.
             WM_APP_DRAG_WATCH => {
                 let under = WindowFromPoint(POINT { x: DOWN_X.load(SeqCst), y: DOWN_Y.load(SeqCst) });
-                DOWN_THREAD.store(GetWindowThreadProcessId(under, None), SeqCst);
-                DOWN_ON_DESKTOP.store(is_desktop(under), SeqCst);
                 DOWN_IN_EXPLORER.store(is_explorer(under), SeqCst);
-                DRAG_TAIL.store(0, SeqCst);
-                SetTimer(hwnd, TIMER_DRAG_WATCH, DRAG_WATCH_MS, None);
-                LRESULT(0)
-            }
-            WM_TIMER if wparam.0 == TIMER_DRAG_WATCH => {
-                if BUTTON_DOWN.load(SeqCst) {
-                    // The icon already sits on the desktop: raising it over desktop-icon
-                    // drags only re-parents it under the shell mid-drag, which upset them.
-                    if !DOWN_ON_DESKTOP.load(SeqCst) && file_drag_under_way() {
-                        crate::beaver::raise(true);
-                    }
-                } else if DRAG_TAIL.fetch_add(1, SeqCst) >= DRAG_WATCH_TAIL {
-                    let _ = KillTimer(hwnd, TIMER_DRAG_WATCH);
-                    crate::beaver::raise(false);
-                }
                 LRESULT(0)
             }
             WM_APP_FLIP => {

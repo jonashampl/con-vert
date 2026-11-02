@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertTriangle, Check, Info, Loader2, X } from "lucide-react";
 import "./toast.css";
 
@@ -112,6 +113,10 @@ export default function Toast() {
       key={card.id}
       onMouseEnter={() => (hovered.current = true)}
       onMouseLeave={() => (hovered.current = false)}
+      // Drag the card anywhere by its body; buttons keep their clicks.
+      onMouseDown={(e) => {
+        if (e.button === 0 && !(e.target as HTMLElement).closest("button")) getCurrentWindow().startDragging();
+      }}
     >
       {backdrop && <img className="glass" src={backdrop} alt="" />}
       <div className="head">

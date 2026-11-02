@@ -179,6 +179,26 @@ pub fn card_start(app: &AppHandle, anchor: (i32, i32), title: String) -> impl Fn
     }
 }
 
+/// Re-reads the screen behind the visible card once it stops moving (dragged by hand, or
+/// placed at a new drop point), so its glass matches where it sits.
+pub fn renew_backdrop(app: &AppHandle) {
+    static MOVES: AtomicU64 = AtomicU64::new(0);
+    let n = MOVES.fetch_add(1, SeqCst) + 1;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(180));
+        let Some(win) = app.get_webview_window("toast") else { return };
+        if MOVES.load(SeqCst) != n || !win.is_visible().unwrap_or(false) {
+            return;
+        }
+        let (Ok(pos), Ok(size), Ok(hwnd)) = (win.outer_position(), win.outer_size(), win.hwnd()) else { return };
+        let shot = crate::capture::backdrop_behind(hwnd.0 as isize, pos.x, pos.y, size.width as i32, size.height as i32);
+        if shot.is_some() {
+            let _ = app.emit_to("toast", "backdrop", shot);
+        }
+    });
+}
+
 /// Puts the card below-right of the drop point, kept inside that monitor's work area,
 /// and shows it without taking focus.
 fn place_toast(app: &AppHandle, (x, y): (i32, i32)) {
@@ -216,9 +236,8 @@ fn place_toast(app: &AppHandle, (x, y): (i32, i32)) {
         }
     }
     log::info!("card at ({px}, {py}) size {w}x{h}");
-    // The screen behind the card, for its glass. shortcut: while a card is already up it
-    // keeps its old backdrop (a capture now would include that card); recapture after
-    // hiding it if moved cards ever look off.
+    // The screen behind the card, for its glass. A card already up renews it once it has
+    // moved (see renew_backdrop).
     if !win.is_visible().unwrap_or(false) {
         let _ = app.emit_to("toast", "backdrop", crate::capture::backdrop(px, py, w, h));
     }
