@@ -14,7 +14,6 @@ pub mod icon;
 pub mod menu;
 pub mod metadata;
 pub mod naming;
-pub mod notes;
 pub mod pdf;
 pub mod pdf_edit;
 pub mod pool;

@@ -60,7 +60,7 @@ pub fn title(action: &str) -> String {
         "tool:compress" => "Compressing".into(),
         "tool:metadata" => "Removing metadata".into(),
         "tool:zip" => "Zipping".into(),
-        "tool:bpmkey" => "Reading tempo and key".into(),
+        "tool:bpm" => "Reading the tempo".into(),
         "tool:cover" => "Saving the cover".into(),
         a => match target_label(a) {
             Some(f) => format!("Converting to {f}"),
@@ -82,7 +82,7 @@ pub fn done_title(action: &str, o: &Outcome) -> String {
         "tool:compress" => "Compressed".into(),
         "tool:metadata" => "Metadata removed".into(),
         "tool:zip" => "Zipped".into(),
-        "tool:bpmkey" => "Tempo and key added".into(),
+        "tool:bpm" => "Tempo added".into(),
         "tool:cover" => "Cover saved".into(),
         a => match target_label(a) {
             Some(f) => format!("Converted to {f}"),

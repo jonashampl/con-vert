@@ -1,6 +1,6 @@
 //! Audio: converts audio and video files to audio formats with the bundled FFmpeg
 //! (an LGPL build shipped next to the app as ffmpeg.exe). Video files give up their
-//! sound track. Converted files are named with their tempo and key (analyze.rs). Results
+//! sound track. Converted files are named with their tempo (analyze.rs). Results
 //! are new files, like every other action; the audio tools ring lives here too.
 
 use std::ffi::OsString;
@@ -160,7 +160,7 @@ fn missing() -> Outcome {
 }
 
 /// Runs `each` on every file in turn (FFmpeg already uses every core). `each` gets a
-/// reporter taking this file's fraction and an optional phase ("Reading tempo and key"),
+/// reporter taking this file's fraction and an optional phase ("Reading the tempo"),
 /// and returns the file it saved, if any. Stops at once when cancelled.
 fn one_by_one(
     paths: &[PathBuf],
@@ -195,25 +195,25 @@ fn one_by_one(
     outcome
 }
 
-/// The file's name with its tempo and key added ("Song 124 BPM Am"), or as it was when
-/// neither could be found.
+/// The file's name with its tempo added ("Song 124 BPM"), or as it was when the name
+/// already has one or none could be found.
 fn tagged_stem(ffmpeg: &Path, src: &Path) -> String {
     let stem = naming::stem(src);
-    if analyze::name_has(&stem) == (true, true) {
+    if analyze::name_has_tempo(&stem) {
         return stem;
     }
     match analyze::analyze(ffmpeg, src) {
-        Ok((bpm, key)) => analyze::tagged_stem(&stem, bpm, key),
+        Ok(bpm) => analyze::tagged_stem(&stem, bpm),
         Err(_) => stem,
     }
 }
 
 /// Converts each file to `target` ("mp3"). Results go next to the originals, named with
-/// their tempo and key: "Song 124 BPM Am.mp3".
+/// their tempo: "Song 124 BPM.mp3".
 pub fn run(paths: &[PathBuf], target: &str, out: &OutputDir, cancel: &AtomicBool, progress: &mut (dyn FnMut(Progress) + Send)) -> Outcome {
     let Some(ff) = ffmpeg() else { return missing() };
     one_by_one(paths, cancel, progress, |src, report| {
-        report(0.0, "Reading tempo and key");
+        report(0.0, "Reading the tempo");
         let stem = tagged_stem(&ff, src);
         naming::write_new_with(&naming::target_dir(src, out), &stem, target, |tmp| ffmpeg_run(&ff, args(src, tmp, target), cancel, &mut |f| report(f, "")))
             .map(Some)
@@ -223,18 +223,18 @@ pub fn run(paths: &[PathBuf], target: &str, out: &OutputDir, cancel: &AtomicBool
 /// The audio tools ring, clockwise from the top: (id, label, icon, hint).
 pub const TOOLS: [(&str, &str, &str, &str); 4] = [
     ("zip", "Zip", "archive", "Pack them into one ZIP"),
-    ("bpmkey", "BPM + Key", "gauge", "Copy named with BPM + key"),
+    ("bpm", "BPM", "gauge", "Copy named with its BPM"),
     ("compress", "Compress", "compress", "Smaller file, same format"),
     ("cover", "Cover", "image-down", "Save album art as JPG"),
 ];
 
-/// Zip and BPM + Key take any audio or video; the rest re-encode, so they need files in
+/// Zip and BPM take any audio or video; the rest re-encode, so they need files in
 /// a format con/vert writes.
 pub fn tool_enabled(id: &str, paths: &[&Path]) -> bool {
     !paths.is_empty()
         && paths.iter().all(|p| is_media(p))
         && match id {
-            "zip" | "bpmkey" => true,
+            "zip" | "bpm" => true,
             _ => paths.iter().all(|p| own_target(p).is_some()),
         }
 }
@@ -278,16 +278,13 @@ pub fn tool(id: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, p
     let Some(ff) = ffmpeg() else { return missing() };
     match id {
         "zip" => zip(paths, out, cancel, progress),
-        // Always reads the audio, even when the name states a tempo and key: a name can be
-        // wrong, and then the copy gets them corrected where they stood.
-        "bpmkey" => {
+        // Always reads the audio, even when the name states a tempo: a name can be wrong,
+        // and then the copy gets it corrected where it stood.
+        "bpm" => {
             let mut o = one_by_one(paths, cancel, progress, |src, report| {
-                report(0.0, "Reading tempo and key");
-                let (bpm, key) = analyze::analyze(&ff, src)?;
-                if bpm.is_none() && key.is_none() {
-                    bail!("no steady beat or clear key found");
-                }
-                let Some(stem) = analyze::retag(&naming::stem(src), bpm, key) else { return Ok(None) };
+                report(0.0, "Reading the tempo");
+                let Some(bpm) = analyze::analyze(&ff, src)? else { bail!("no steady beat found") };
+                let Some(stem) = analyze::retag(&naming::stem(src), bpm) else { return Ok(None) };
                 let ext = src.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
                 naming::write_new_with(&naming::target_dir(src, out), &stem, &ext, |tmp| {
                     std::fs::copy(src, tmp).map(|_| ()).context("can't copy the file")
@@ -295,7 +292,7 @@ pub fn tool(id: &str, paths: &[PathBuf], out: &OutputDir, cancel: &AtomicBool, p
                 .map(Some)
             });
             if o.outputs.is_empty() && o.errors.is_empty() && !o.cancelled {
-                o.summary = "Its name already has the right tempo and key".into();
+                o.summary = "Its name already has the right tempo".into();
             }
             o
         }
@@ -403,7 +400,7 @@ mod tests {
         // Tagged like DJ software does, so the name it gets is known.
         let src = dir.join("Tone.flac");
         let ok = Command::new(&ff)
-            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-metadata", "BPM=124", "-metadata", "KEY=Am"])
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-metadata", "BPM=124"])
             .arg(&src)
             .status()
             .unwrap();
@@ -414,7 +411,7 @@ mod tests {
             let o = run(std::slice::from_ref(&src), id, &OutputDir::Beside, &cancel, &mut |p| last = p.fraction);
             assert!(o.errors.is_empty(), "{id}: {:?}", o.errors);
             let out = &o.outputs[0];
-            assert_eq!(out.file_name().unwrap().to_string_lossy(), format!("Tone 124 BPM Am.{id}"));
+            assert_eq!(out.file_name().unwrap().to_string_lossy(), format!("Tone 124 BPM.{id}"));
             assert!(std::fs::metadata(out).unwrap().len() > 1000, "{id} output is empty");
             assert!(last > 0.0);
         }

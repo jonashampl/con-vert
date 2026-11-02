@@ -172,7 +172,8 @@ const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 function tween(ms, fn, ease = minJerk) {
   return new Promise((done) => {
     const t0 = performance.now();
-    const step = (now) => {
+    const step = () => {
+      const now = performance.now();
       const t = Math.min(1, (now - t0) / ms);
       fn(ease(t));
       t < 1 ? requestAnimationFrame(step) : done();
@@ -199,7 +200,9 @@ class Hand {
     this.g = { x: 0, y: 0, vx: 0, vy: 0 };
     this.onMove = null;
     let last = performance.now();
-    const frame = (now) => {
+    // One clock everywhere (performance.now), so recordings under virtual time match.
+    const frame = () => {
+      const now = performance.now();
       const dt = Math.min(48, now - last) / 16.67;
       last = now;
       this.el.style.transform = `translate(${this.x - 2}px, ${this.y - 2}px)`;
@@ -268,7 +271,7 @@ const lucide = (name, extra = "") => `<svg viewBox="0 0 24 24" fill="none" strok
 const CONVERT = ["MP3", "FLAC", "M4A", "OGG", "OPUS", "AAC"].map((l) => ({ label: l }));
 const TOOLS = [
   { label: "Zip", icon: "archive", hint: "Pack them into one ZIP" },
-  { label: "BPM + Key", icon: "gauge", hint: "Copy named with BPM + key" },
+  { label: "BPM", icon: "gauge", hint: "Copy named with its BPM" },
   { label: "Compress", icon: "shrink", hint: "Smaller file, same format" },
   { label: "Cover", icon: "imageDown", hint: "Save album art as JPG" },
 ];
@@ -538,7 +541,7 @@ function sceneA(stage) {
     ],
     list: CONVERT, title: "2.4 MB", target: 0,
     working: "Converting to MP3",
-    result: { name: "dark loop.mp3", icon: () => fileIcon("MP3") },
+    result: { name: "dark loop 146 BPM.mp3", icon: () => fileIcon("MP3") },
   });
 }
 
@@ -561,13 +564,13 @@ function sceneB(stage) {
 function sceneC(stage) {
   const caps = {
     Zip: "Packs several files into one ZIP.",
-    "BPM + Key": "Saves a copy named with its tempo and key, like dark loop 146 BPM Dphy.",
+    BPM: "Saves a copy named with its tempo, like dark loop 146 BPM.",
     Compress: "A smaller file in the same format. WAV becomes lossless FLAC.",
     Cover: "Saves a track's album art as a JPG.",
     MP3: "Converts to MP3. Also WAV, FLAC, M4A, OGG, OPUS and AAC.",
     FLAC: "Lossless FLAC, for half the size of a WAV.",
   };
-  const order = ["Zip", "BPM + Key", "Compress", "Cover", "MP3", "FLAC"];
+  const order = ["Zip", "BPM", "Compress", "Cover", "MP3", "FLAC"];
   stage.innerHTML = `<div class="c-wall"></div>
     <div class="cap"><div class="over">con/vert</div><div class="swap"><h2></h2><p></p></div><div class="dots">${order.map(() => "<i></i>").join("")}</div></div>`;
   const ring = new Ring(stage, 340);

@@ -113,7 +113,7 @@ fn audio_page(paths: &[String], caps: &Caps) -> Vec<Segment> {
             label: id.to_ascii_uppercase(),
             icon: None,
             enabled: caps.audio,
-            hint: format!("{} copy, BPM + key in name", id.to_ascii_uppercase()),
+            hint: format!("{} copy, BPM in name", id.to_ascii_uppercase()),
         })
         .collect()
 }
@@ -268,8 +268,8 @@ mod tests {
         assert!(m.media);
         assert_eq!(m.start_page, CONVERT_PAGE);
         assert_eq!(enabled(&m.pages[CONVERT_PAGE]), ["convert:mp3", "convert:wav", "convert:flac", "convert:m4a", "convert:ogg", "convert:opus", "convert:aac"]);
-        // A video can be zipped or named by tempo and key; editing tools need audio.
-        assert_eq!(enabled(&m.pages[TOOLS_PAGE]), ["tool:zip", "tool:bpmkey"]);
+        // A video can be zipped or named by its tempo; editing tools need audio.
+        assert_eq!(enabled(&m.pages[TOOLS_PAGE]), ["tool:zip", "tool:bpm"]);
         assert_eq!(enabled(&build(&["a.wav".into()], &Caps::ALL).pages[TOOLS_PAGE]).len(), 4);
         // An MP3 isn't offered MP3; a mixed audio batch gets every target.
         assert!(!ids(&build(&["a.mp3".into()], &Caps::ALL).pages[CONVERT_PAGE]).contains(&"convert:mp3"));

@@ -1,6 +1,6 @@
 [package]
 name = "shiftdrop"
-version = "1.0.3"
+version = "1.0.4"
 description = "Shift-drag file actions for Windows"
 authors = ["Jonas J. Hampl"]
 edition = "2024"
@@ -75,6 +75,6 @@ features = [
 [profile.dev.package."*"]
 opt-level = 3
 
-# Tempo and key analysis is unusably slow unoptimised, even in debug builds.
+# Tempo analysis is unusably slow unoptimised, even in debug builds.
 [profile.dev.package.shiftdrop-core]
 opt-level = 3

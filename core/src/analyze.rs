@@ -1,16 +1,11 @@
-//! Tempo (BPM) and key of a piece of music, for naming converted files
-//! ("Song 124 BPM Am.mp3"). Tags written by DJ software win when present; otherwise the
-//! sound is analysed: FFmpeg decodes up to four minutes to mono 22.05 kHz, then
-//! - tempo: spectral-flux onsets, autocorrelation, a comb over the beat period and its
-//!   multiples, kept in the 85-180 BPM range producers name tracks in (trap at 150, not 75);
-//!   for loops, the whole-bar tempo their length implies, when the beat fits it;
-//! - key: the notes Spotify's Basic Pitch model hears (notes.rs) matched against three key
-//!   profiles; major or minor from the 3rd, 6th and 7th, Phrygian ("Dphy") from a clear
-//!   flat 2nd. When the model hears no notes, a harmonic-only spectrogram down to 27 Hz
-//!   (808s) stands in.
-//! Measured with examples/analyze_eval.rs on producer loops named with tempo and key:
-//! tempo ~85% exact (1003 loops), key ~57% exact (was ~52% from the spectrum alone).
-//! Either answer is dropped when the evidence is weak, so a guess never ends up in a name.
+//! Tempo (BPM) of a piece of music, for naming converted files ("Song 124 BPM.mp3"). A BPM
+//! tag written by DJ software wins when present; otherwise the sound is analysed: FFmpeg
+//! decodes up to four minutes to mono 22.05 kHz, then spectral-flux onsets, autocorrelation
+//! and a comb over the beat period and its multiples, kept in the 85-180 BPM range producers
+//! name tracks in (trap at 150, not 75); for loops, the whole-bar tempo their length implies,
+//! when the beat fits it. Measured with examples/analyze_eval.rs: 85.5% exact on 1005
+//! producer loops named with their tempo; on 30 s excerpts of songs (GTZAN) 43% exact, 58%
+//! within 1 BPM. The answer is dropped when the beat is weak, so a guess never ends up in a name.
 
 use std::io::Read;
 use std::path::Path;
@@ -21,109 +16,24 @@ use anyhow::{Context, Result};
 pub const RATE: f32 = 22050.0;
 const MAX_SECONDS: u32 = 240;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Key {
-    /// Pitch class of the tonic, 0 = C.
-    pub tonic: u8,
-    /// Minor third above the tonic (natural minor, or Phrygian).
-    pub minor: bool,
-    /// Minor with a flat second: trap and drill melodies use it a lot.
-    pub phrygian: bool,
+/// What the file's tags say about its tempo ("TBPM" / "BPM").
+pub fn parse_tags(stderr: &str) -> Option<u32> {
+    stderr.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        matches!(name.trim().to_ascii_lowercase().as_str(), "tbpm" | "bpm")
+            .then(|| value.trim().parse::<f32>().ok().filter(|b| (40.0..=300.0).contains(b)).map(|b| b.round() as u32))
+            .flatten()
+    })
 }
 
-// "maj" spelled out: a bare "C" in a file name reads as if the scale were missing.
-const MAJOR_NAMES: [&str; 12] = ["Cmaj", "Dbmaj", "Dmaj", "Ebmaj", "Emaj", "Fmaj", "F#maj", "Gmaj", "Abmaj", "Amaj", "Bbmaj", "Bmaj"];
-const MINOR_NAMES: [&str; 12] = ["Cm", "C#m", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"];
-// The way producers write it ("Dphy", "DsPHY").
-const PHRYGIAN_NAMES: [&str; 12] = ["Cphy", "Csphy", "Dphy", "Dsphy", "Ephy", "Fphy", "Fsphy", "Gphy", "Gsphy", "Aphy", "Asphy", "Bphy"];
-
-impl Key {
-    /// "Am", "F#m", "Bbmaj", "Dphy".
-    pub fn name(&self) -> &'static str {
-        let names = if self.phrygian { &PHRYGIAN_NAMES } else if self.minor { &MINOR_NAMES } else { &MAJOR_NAMES };
-        names[self.tonic as usize % 12]
-    }
+/// Tempo of `path`, its tag first. None when there's no tag and no steady beat.
+pub fn analyze(ffmpeg: &Path, path: &Path) -> Result<Option<u32>> {
+    let (pcm, tag) = decode(ffmpeg, path)?;
+    Ok(tag.or_else(|| tempo(&pcm)))
 }
 
-/// Reads a key written as "Am", "A minor", "F#min", "Cs Min", "Bb", "C major" or Camelot
-/// "8A". Bare letters are major.
-pub fn parse_key(s: &str) -> Option<Key> {
-    let s = s.trim();
-    // Camelot wheel: 8A = A minor, 8B = C major.
-    if let Some(n) = s.strip_suffix(['A', 'a', 'B', 'b']).and_then(|n| n.parse::<u8>().ok()).filter(|n| (1..=12).contains(n)) {
-        let minor = s.ends_with(['A', 'a']);
-        let base = if minor { 8 } else { 3 }; // 1A = G#m (8), 1B = B (11): each step is a fifth (+7)
-        let tonic = ((base as i32 + (n as i32 - 1) * 7 + if minor { 0 } else { 8 }) % 12) as u8;
-        return Some(Key { tonic, minor, phrygian: false });
-    }
-    let mut chars = s.chars();
-    let letter = chars.next()?.to_ascii_uppercase();
-    let mut tonic: i32 = match letter {
-        'C' => 0,
-        'D' => 2,
-        'E' => 4,
-        'F' => 5,
-        'G' => 7,
-        'A' => 9,
-        'B' => 11,
-        _ => return None,
-    };
-    let rest: String = chars.collect();
-    let mut rest = rest.as_str();
-    for (prefix, shift) in [("#", 1), ("♯", 1), ("♭", -1), ("b", -1), ("s", 1), ("B", -1), ("S", 1)] {
-        // "b" and "s" are accidentals only when something (or nothing) that reads as a
-        // quality follows: "Bb", "Bbm", "Csmin", "CSMIN", "DBmin"; not "Bmin" read as B-flat.
-        if let Some(r) = rest.strip_prefix(prefix) {
-            if prefix.len() > 1 || prefix == "#" || quality(r).is_some() {
-                tonic += shift;
-                rest = r;
-                break;
-            }
-        }
-    }
-    let (minor, phrygian) = quality(rest)?;
-    Some(Key { tonic: tonic.rem_euclid(12) as u8, minor, phrygian })
-}
-
-/// (minor, phrygian) for a quality like "min", "maj" or "phy"; None for anything else.
-fn quality(rest: &str) -> Option<(bool, bool)> {
-    let r = rest.trim_matches(|c: char| c == ' ' || c == '-' || c == '_');
-    if r == "M" {
-        return Some((false, false));
-    }
-    match r.to_ascii_lowercase().as_str() {
-        "" | "maj" | "major" | "dur" => Some((false, false)),
-        "m" | "min" | "minor" | "moll" => Some((true, false)),
-        "phy" | "phry" | "phrygian" | "min phy" => Some((true, true)),
-        _ => None,
-    }
-}
-
-/// What the file's tags say: (bpm, key), from "TBPM"/"BPM" and "TKEY"/"initialkey".
-pub fn parse_tags(stderr: &str) -> (Option<u32>, Option<Key>) {
-    let (mut bpm, mut key) = (None, None);
-    for line in stderr.lines() {
-        let Some((name, value)) = line.split_once(':') else { continue };
-        match name.trim().to_ascii_lowercase().as_str() {
-            "tbpm" | "bpm" => bpm = bpm.or(value.trim().parse::<f32>().ok().filter(|b| (40.0..=300.0).contains(b)).map(|b| b.round() as u32)),
-            "tkey" | "initialkey" | "key" => key = key.or(parse_key(value)),
-            _ => {}
-        }
-    }
-    (bpm, key)
-}
-
-/// Tempo and key of `path`, tags first. Either may be None (no tag, weak evidence).
-pub fn analyze(ffmpeg: &Path, path: &Path) -> Result<(Option<u32>, Option<Key>)> {
-    let (pcm, (tag_bpm, tag_key)) = decode(ffmpeg, path)?;
-    if tag_bpm.is_some() && tag_key.is_some() {
-        return Ok((tag_bpm, tag_key));
-    }
-    Ok((tag_bpm.or_else(|| tempo(&pcm)), tag_key.or_else(|| key(&pcm))))
-}
-
-/// Up to four minutes of `path` as mono samples at [`RATE`], plus what its tags say.
-pub fn decode(ffmpeg: &Path, path: &Path) -> Result<(Vec<f32>, (Option<u32>, Option<Key>))> {
+/// Up to four minutes of `path` as mono samples at [`RATE`], plus its BPM tag.
+pub fn decode(ffmpeg: &Path, path: &Path) -> Result<(Vec<f32>, Option<u32>)> {
     use std::os::windows::process::CommandExt;
     let mut child = Command::new(ffmpeg)
         .args(["-hide_banner", "-nostdin", "-i"])
@@ -144,51 +54,24 @@ pub fn decode(ffmpeg: &Path, path: &Path) -> Result<(Vec<f32>, (Option<u32>, Opt
     let mut bytes = Vec::new();
     child.stdout.take().context("no stdout")?.read_to_end(&mut bytes)?;
     let _ = child.wait();
-    let tags = parse_tags(&err.join().unwrap_or_default());
+    let tag = parse_tags(&err.join().unwrap_or_default());
     let pcm: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-    Ok((pcm, tags))
+    Ok((pcm, tag))
 }
 
-/// "Song" -> "Song 124 BPM Am"; leaves out what's unknown or already in the name.
-pub fn tagged_stem(stem: &str, bpm: Option<u32>, key: Option<Key>) -> String {
-    let (has_bpm, has_key) = name_has(stem);
-    let mut out = stem.to_string();
-    if let Some(b) = bpm.filter(|_| !has_bpm) {
-        out.push_str(&format!(" {b} BPM"));
-    }
-    if let Some(k) = key.filter(|_| !has_key) {
-        out.push(' ');
-        out.push_str(k.name());
-    }
-    out
+/// A key as producers write it in names ("Dphy", "G#Min", "abmin", "CSMIN"): only to tell a
+/// bare tempo beside it ("SCH 146 Dphy") from any other number. Keys are left as written.
+fn is_key_word(t: &str) -> bool {
+    let l = t.to_ascii_lowercase();
+    let Some(rest) = l.strip_prefix(['a', 'b', 'c', 'd', 'e', 'f', 'g']) else { return false };
+    let rest = rest.strip_prefix(['#', 'b', 's']).filter(|r| !r.is_empty()).unwrap_or(rest);
+    t.len() <= 9 && ["min", "minor", "maj", "major", "phy", "phry", "moll", "dur"].contains(&rest)
 }
 
-/// Whether a file name already states its tempo and its key, as (tempo, key). Understands
-/// our own "Song 124 BPM Am" (a converted file converted again) and producer names like
-/// "Loop 146 Dphy" or "Melody 140BPM G#Min".
-pub fn name_has(stem: &str) -> (bool, bool) {
-    let tokens: Vec<&str> = stem.split(|c: char| !(c.is_ascii_alphanumeric() || c == '#')).filter(|t| !t.is_empty()).collect();
-    let lower: Vec<String> = tokens.iter().map(|t| t.to_ascii_lowercase()).collect();
-    let is_bpm = |t: &str| t == "bpm" || (t.ends_with("bpm") && t[..t.len() - 3].chars().all(|c| c.is_ascii_digit()));
-    // A key with its quality written out ("Am" is too common a word to count on its own)...
-    let spelled = |t: &str| {
-        t.len() <= 9
-            && ["min", "minor", "maj", "major", "phy", "phry", "moll", "dur"].iter().any(|q| t.to_ascii_lowercase().ends_with(q))
-            && parse_key(t).is_some()
-    };
-    // ...or any key right after the tempo: "124 BPM C", "124 BPM Am".
-    let after_bpm = |i: usize| is_bpm(&lower[i]) && tokens.get(i + 1).is_some_and(|t| parse_key(t).is_some());
-    let has_key = (0..tokens.len()).any(|i| spelled(tokens[i]) || after_bpm(i));
-    // A bare tempo counts only right next to a spelled key: "SCH 146 Dphy", not "Track 101".
-    let number = |i: usize| lower[i].parse::<u32>().is_ok_and(|n| (60..=200).contains(&n));
-    let bare_tempo = (0..tokens.len()).any(|i| number(i) && ((i > 0 && spelled(tokens[i - 1])) || tokens.get(i + 1).is_some_and(|t| spelled(t))));
-    (lower.iter().any(|t| is_bpm(t)) || bare_tempo, has_key)
-}
-
-/// The name with its tempo and key set to these, written where the old ones stood ("ANIME
-/// 140 gsMIN x" -> "ANIME 140 BPM G#m x") or added at the end. What wasn't found keeps the
-/// name's value. None when the name already says exactly this.
-pub fn retag(stem: &str, bpm: Option<u32>, key: Option<Key>) -> Option<String> {
+/// Where a file name states a tempo: (byte range to replace, the tempo). Understands our own
+/// "Song 124 BPM", "140BPM", "bpm 130" and producer names like "SCH 146 Dphy" or "146CbMIN"
+/// (a tempo run into a key); a number alone ("Track 101") is not a tempo.
+fn tempo_spans(stem: &str) -> Vec<(std::ops::Range<usize>, u32)> {
     let mut toks: Vec<(usize, &str)> = Vec::new();
     let mut start = None;
     for (i, c) in stem.char_indices() {
@@ -202,90 +85,70 @@ pub fn retag(stem: &str, bpm: Option<u32>, key: Option<Key>) -> Option<String> {
         toks.push((s, &stem[s..]));
     }
     let lower: Vec<String> = toks.iter().map(|t| t.1.to_ascii_lowercase()).collect();
-    let tempo = |i: usize| lower.get(i).and_then(|t| t.parse::<u32>().ok()).filter(|n| (50..=250).contains(n));
-    let spelled = |t: &str| {
-        t.len() <= 9 && ["min", "minor", "maj", "major", "phy", "phry", "moll", "dur"].iter().any(|q| t.to_ascii_lowercase().ends_with(q)) && parse_key(t).is_some()
-    };
-    let (mut bpms, mut keys, mut spans): (Vec<u32>, Vec<Key>, Vec<usize>) = (Vec::new(), Vec::new(), Vec::new());
+    let number = |i: usize| lower.get(i).and_then(|t| t.parse::<u32>().ok()).filter(|n| (50..=250).contains(n));
+    let span = |i: usize| toks[i].0..toks[i].0 + toks[i].1.len();
+    let mut out = Vec::new();
     for i in 0..toks.len() {
-        let t = toks[i].1;
         let l = lower[i].as_str();
         if l == "bpm" {
-            spans.push(i);
-            for j in [i.wrapping_sub(1), i + 1] {
-                if let Some(n) = tempo(j) {
-                    bpms.push(n);
-                    spans.push(j);
-                    break;
-                }
-            }
-            if let Some(k) = toks.get(i + 1).and_then(|n| parse_key(n.1)) {
-                keys.push(k);
-                spans.push(i + 1);
+            // "124 BPM" or "bpm 130": the word and its number go together.
+            if let Some(j) = [i.wrapping_sub(1), i + 1].into_iter().find(|&j| number(j).is_some()) {
+                out.push((span(j.min(i)).start..span(j.max(i)).end, number(j).unwrap_or_default()));
             }
         } else if let Some(n) = l.strip_suffix("bpm").and_then(|d| d.parse::<u32>().ok()) {
-            bpms.push(n);
-            spans.push(i);
-        } else if spelled(t) {
-            keys.extend(parse_key(t));
-            spans.push(i);
-            // A bare tempo right beside the key: "SCH 146 Dphy".
-            for j in [i.wrapping_sub(1), i + 1] {
-                if let Some(n) = tempo(j) {
-                    bpms.push(n);
-                    spans.push(j);
-                    break;
-                }
-            }
-        } else if t.len() <= 2 && matches!(lower.get(i + 1).map(String::as_str), Some("min" | "minor" | "maj" | "major")) {
-            // "D min"
-            if let Some(k) = parse_key(&format!("{t}{}", toks[i + 1].1)) {
-                keys.push(k);
-                spans.push(i);
-                spans.push(i + 1);
+            out.push((span(i), n));
+        } else if is_key_word(toks[i].1) {
+            if let Some(j) = [i.wrapping_sub(1), i + 1].into_iter().find(|&j| number(j).is_some() && lower.get(j + 1).is_none_or(|w| w != "bpm") && (j == 0 || lower[j - 1] != "bpm")) {
+                out.push((span(j), number(j).unwrap_or_default()));
             }
         } else {
-            // Tempo and key run together: "146CbMIN".
-            let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
-            if (2..=3).contains(&digits) && spelled(&t[digits..]) {
-                bpms.extend(t[..digits].parse::<u32>().ok());
-                keys.extend(parse_key(&t[digits..]));
-                spans.push(i);
+            let digits = l.chars().take_while(|c| c.is_ascii_digit()).count();
+            if (2..=3).contains(&digits) && is_key_word(&toks[i].1[digits..]) {
+                let s = toks[i].0;
+                out.extend(toks[i].1[..digits].parse::<u32>().ok().map(|n| (s..s + digits, n)));
             }
         }
-        // "key D min": the word "key" goes with it.
-        if l == "key" && toks.get(i + 1).is_some_and(|n| parse_key(n.1).is_some()) {
-            spans.push(i);
-        }
     }
-    // Right already only if every tag in the name agrees (a name can carry an older one too).
-    let agrees = |found: &[u32], b: u32| !found.is_empty() && found.iter().all(|x| *x == b);
-    if bpm.is_none_or(|b| agrees(&bpms, b)) && key.is_none_or(|k| !keys.is_empty() && keys.iter().all(|x| *x == k)) {
+    out.sort_by_key(|(r, _)| r.start);
+    out.dedup_by(|a, b| a.0 == b.0);
+    out
+}
+
+/// Whether a file name already states a tempo.
+pub fn name_has_tempo(stem: &str) -> bool {
+    !tempo_spans(stem).is_empty()
+}
+
+/// "Song" -> "Song 124 BPM"; as it was when the tempo is unknown or already in the name.
+pub fn tagged_stem(stem: &str, bpm: Option<u32>) -> String {
+    match bpm.filter(|_| !name_has_tempo(stem)) {
+        Some(b) => format!("{stem} {b} BPM"),
+        None => stem.to_string(),
+    }
+}
+
+/// The name with its tempo set to `bpm`, written where the old one stood ("ANIME 140 gsMIN x"
+/// -> "ANIME 141 BPM gsMIN x") or added at the end. None when the name already says it.
+pub fn retag(stem: &str, bpm: u32) -> Option<String> {
+    let spans = tempo_spans(stem);
+    if !spans.is_empty() && spans.iter().all(|(_, n)| *n == bpm) {
         return None;
     }
-    let tag = [bpm.or(bpms.first().copied()).map(|b| format!("{b} BPM")), key.or(keys.first().copied()).map(|k| k.name().to_string())]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" ");
-    spans.sort_unstable();
-    spans.dedup();
-    let mut out = String::new();
-    let mut at = 0;
-    for (n, &i) in spans.iter().enumerate() {
-        let (s, t) = toks[i];
-        out.push_str(&stem[at..s]);
-        if n == 0 {
-            out.push_str(&tag);
-        }
-        at = s + t.len();
+    let tag = format!("{bpm} BPM");
+    let Some(first) = spans.first() else { return Some(format!("{stem} {tag}")) };
+    let mut out = stem[..first.0.start].to_string();
+    out.push_str(&tag);
+    // A tempo run into a key ("146CbMIN") gets a space before the key.
+    if stem[first.0.end..].starts_with(|c: char| c.is_ascii_alphabetic()) {
+        out.push(' ');
+    }
+    let mut at = first.0.end;
+    for (r, _) in &spans[1..] {
+        out.push_str(&stem[at..r.start]);
+        at = r.end;
     }
     out.push_str(&stem[at..]);
-    if spans.is_empty() {
-        out.push(' ');
-        out.push_str(&tag);
-    }
-    // Tidy the gaps the old tags left: "a - 126 - Fmin @x" -> "a - 126 BPM Fm - @x".
+    // Tidy the gaps older tags left: "a - 126 - Fmin" stays "a - 126 BPM - Fmin".
     let mut out = out.split_whitespace().collect::<Vec<_>>().join(" ");
     while out.contains(" - - ") {
         out = out.replace(" - - ", " - ");
@@ -355,8 +218,6 @@ fn spectrogram(x: &[f32], size: usize, hop: usize, max_bin: usize) -> Vec<Vec<f3
 
 /// How much the winning beat period must stand out from the rest of the range.
 pub const MIN_TEMPO_CONFIDENCE: f32 = 1.1;
-/// How clearly major and minor must differ (share of their combined evidence).
-pub const MIN_KEY_MARGIN: f32 = 0.05;
 
 /// Beats per minute, rounded; None when there's no steady beat.
 pub fn tempo(x: &[f32]) -> Option<u32> {
@@ -495,350 +356,44 @@ const LOOP_FIT: f32 = 0.7;
 /// Weight of bar counts other than powers of two.
 const ODD_BARS: f32 = 0.6;
 
-// ---------- key ----------
-
-const PROFILES: [([f32; 12], [f32; 12]); 3] = [
-    // Krumhansl-Kessler
-    (
-        [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
-        [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],
-    ),
-    // Temperley (Kostka-Payne)
-    (
-        [0.748, 0.060, 0.488, 0.082, 0.670, 0.460, 0.096, 0.715, 0.104, 0.366, 0.057, 0.400],
-        [0.712, 0.084, 0.474, 0.618, 0.049, 0.460, 0.105, 0.747, 0.404, 0.067, 0.133, 0.330],
-    ),
-    // Shaath (KeyFinder)
-    (
-        [6.6, 2.0, 3.5, 2.3, 4.6, 4.0, 2.5, 5.2, 2.4, 3.7, 2.3, 3.4],
-        [6.5, 2.7, 3.5, 5.4, 2.6, 3.5, 2.5, 5.2, 4.0, 2.7, 4.3, 3.2],
-    ),
-];
-
-fn pearson(a: &[f32; 12], b: &[f32; 12]) -> f32 {
-    let (ma, mb) = (a.iter().sum::<f32>() / 12.0, b.iter().sum::<f32>() / 12.0);
-    let (mut num, mut da, mut db) = (0.0, 0.0, 0.0);
-    for i in 0..12 {
-        num += (a[i] - ma) * (b[i] - mb);
-        da += (a[i] - ma).powi(2);
-        db += (b[i] - mb).powi(2);
-    }
-    if da <= 0.0 || db <= 0.0 { 0.0 } else { num / (da * db).sqrt() }
-}
-
-/// Correlation of a chroma vector with all 24 keys (0-11 major, 12-23 minor).
-fn key_scores(chroma: &[f32; 12]) -> [f32; 24] {
-    let mut out = [0.0; 24];
-    for (major, minor) in PROFILES {
-        for t in 0..12 {
-            let rot = |p: &[f32; 12]| std::array::from_fn::<f32, 12, _>(|i| p[(i + 12 - t) % 12]);
-            out[t] += pearson(chroma, &rot(&major)) / PROFILES.len() as f32;
-            out[12 + t] += pearson(chroma, &rot(&minor)) / PROFILES.len() as f32;
-        }
-    }
-    out
-}
-
-/// Harmonics 2-8 as (semitones up, share of the fundamental's level taken off). Strong on
-/// purpose: distorted 808s and saws carry loud overtones (measured best at these values).
-const HARMONICS: [(usize, f32); 7] = [(12, 1.0), (19, 0.8), (24, 0.6), (28, 0.5), (31, 0.4), (34, 0.3), (36, 0.24)];
-/// How much more the minor-scale notes count when deciding major or minor. These three
-/// were chosen on 1757 files with known keys: GTZAN songs (837, ten genres), GiantSteps EDM
-/// (604), kit loops (283, 26 Phrygian) and a producer's own beats (33). Against the earlier
-/// 2 / 2 / 0.2: 56.0% -> 59.8% exact overall, songs 58.5 -> 63.1, EDM 52.3 -> 58.3, beats
-/// 66.7 -> 63.6, kit loops 55.1 -> 53.0; false Phrygian calls 124 -> 49 (true ones 16 -> 11).
-const MINOR_LEAN: f32 = 1.6;
-/// Phrygian when the flat second outweighs the natural one by this much (in real Phrygian
-/// the natural second is hardly played)...
-const PHRYGIAN_RATIO: f32 = 6.0;
-/// ...and is at least this share of the tonic triad's average level (the trap move: a
-/// minor tonic with the chord on the flat second for one bar in four).
-const PHRYGIAN_SHARE: f32 = 0.25;
-/// Pitch-class levels from the note model are raised to this power before matching.
-const NOTE_POWER: f32 = 0.75;
-
-fn median(v: &mut [f32]) -> f32 {
-    let mid = v.len() / 2;
-    *v.select_nth_unstable_by(mid, |a, b| a.total_cmp(b)).1
-}
-
-/// The key; None when no key fits clearly (drums only, speech, atonal).
-pub fn key(x: &[f32]) -> Option<Key> {
-    key_scored(x).filter(|(_, m)| *m >= MIN_KEY_MARGIN).map(|(k, _)| k)
-}
-
-/// The likeliest key with how clearly major and minor differed: from the notes Basic
-/// Pitch hears, or from the spectrum when the model hears none.
-pub fn key_scored(x: &[f32]) -> Option<(Key, f32)> {
-    match crate::notes::chroma(x) {
-        // The model only answers when it hears notes, and the files a major/minor margin
-        // would drop are still right ~60% of the time, so no margin filter here.
-        Some(c) => {
-            // Softened so one loud, long note (an 808) doesn't drown the rest: measured on
-            // two producer-kit sets, Phrygian loops and synthetic loops, +2% exact, no set worse.
-            let c = c.map(|v| v.powf(NOTE_POWER));
-            decide(&key_scores(&c), &c).map(|(k, _)| (k, 1.0))
-        }
-        None => spectrum_key(x),
-    }
-}
-
-/// How far the recording sits from A = 440 Hz, in cents (-50..50): where the spectral peaks
-/// fall between semitones, weighted by their level, over the first minute. Old records,
-/// tape and sped-up rips often sit between two semitones, which the note model would split.
-pub fn tuning_cents(x: &[f32]) -> f32 {
-    const SIZE: usize = 16384;
-    let bin_hz = RATE / SIZE as f32;
-    let (lo, hi) = ((60.0 / bin_hz) as usize, (2000.0 / bin_hz) as usize);
-    let (mut cs, mut sn) = (0.0f32, 0.0f32);
-    for f in spectrogram(&x[..x.len().min(60 * RATE as usize)], SIZE, SIZE / 2, hi + 2) {
-        for k in lo + 1..hi {
-            let (a, b, c) = (f[k - 1], f[k], f[k + 1]);
-            if b > a && b > c {
-                let d = 0.5 * (a - c) / (a - 2.0 * b + c);
-                let cents = 1200.0 * ((k as f32 + d) * bin_hz / 440.0).log2();
-                let ang = cents / 100.0 * 2.0 * std::f32::consts::PI;
-                cs += b * ang.cos();
-                sn += b * ang.sin();
-            }
-        }
-    }
-    sn.atan2(cs) / (2.0 * std::f32::consts::PI) * 100.0
-}
-
-/// `x` played back `cents` lower (linear interpolation), so its notes land on the A = 440
-/// grid. The length changes by the same tiny ratio.
-pub fn retuned(x: &[f32], cents: f32) -> Vec<f32> {
-    let step = 2f32.powf(-cents / 1200.0);
-    let n = ((x.len() as f32 - 1.0) / step) as usize;
-    (0..n)
-        .map(|i| {
-            let p = i as f32 * step;
-            let (j, f) = (p as usize, p.fract());
-            x[j] * (1.0 - f) + x.get(j + 1).copied().unwrap_or(0.0) * f
-        })
-        .collect()
-}
-
-/// What the note model listens to: songs longer than the model's budget are heard in three
-/// parts spread across them (intro, middle, late), not just the first 90 s; then retuned to
-/// A = 440 when they're off by more than a few cents.
-pub fn key_input(x: &[f32]) -> std::borrow::Cow<'_, [f32]> {
-    const PART: usize = 30 * RATE as usize;
-    let mut x = std::borrow::Cow::Borrowed(x);
-    if x.len() > 3 * PART + 2 * RATE as usize {
-        let n = x.len();
-        let parts: Vec<f32> = [0.1, 0.45, 0.8]
-            .iter()
-            .flat_map(|at| {
-                let s = ((n as f32 * at) as usize).min(n - PART);
-                x[s..s + PART].to_vec()
-            })
-            .collect();
-        x = std::borrow::Cow::Owned(parts);
-    }
-    let cents = tuning_cents(&x);
-    if cents.abs() > 8.0 {
-        x = std::borrow::Cow::Owned(retuned(&x, cents));
-    }
-    x
-}
-
-/// Key from the harmonic spectrum alone (the method before the note model).
-fn spectrum_key(x: &[f32]) -> Option<(Key, f32)> {
-    const SIZE: usize = 16384;
-    const HOP: usize = 4096;
-    let bin_hz = RATE / SIZE as f32;
-    let (lo, hi) = ((27.0 / bin_hz) as usize, (2100.0 / bin_hz) as usize);
-    let spec = spectrogram(x, SIZE, HOP, hi + 2);
-    if spec.len() < 8 {
-        return None;
-    }
-
-    // Harmonic part: median over time (sustained) vs over frequency (percussive).
-    let (nf, nb) = (spec.len(), hi + 2);
-    let mut harm = vec![vec![0.0f32; nb]; nf];
-    let mut buf = Vec::with_capacity(17);
-    for t in 0..nf {
-        for k in lo..=hi {
-            buf.clear();
-            buf.extend((t.saturating_sub(8)..(t + 9).min(nf)).map(|u| spec[u][k]));
-            let h = median(&mut buf);
-            buf.clear();
-            buf.extend((k.saturating_sub(8)..(k + 9).min(nb)).map(|j| spec[t][j]));
-            let p = median(&mut buf);
-            let m = spec[t][k];
-            harm[t][k] = if h + p > 0.0 { m * h * h / (h * h + p * p) } else { 0.0 };
-        }
-    }
-
-    // Tuning: where the spectral peaks sit between semitones (circular mean, in cents).
-    let (mut cs, mut sn) = (0.0f32, 0.0f32);
-    for f in &harm {
-        for k in lo + 1..hi {
-            let (a, b, c) = (f[k - 1], f[k], f[k + 1]);
-            if b > a && b > c && b > 0.0 {
-                let d = 0.5 * (a - c) / (a - 2.0 * b + c);
-                let freq = (k as f32 + d) * bin_hz;
-                let cents = 1200.0 * (freq / 440.0).log2();
-                let ang = cents / 100.0 * 2.0 * std::f32::consts::PI;
-                cs += b * ang.cos();
-                sn += b * ang.sin();
-            }
-        }
-    }
-    let tuning = sn.atan2(cs) / (2.0 * std::f32::consts::PI) * 100.0; // cents, -50..50
-    let reference = 440.0 * 2f32.powf(tuning / 1200.0);
-    // Spectral peaks at their interpolated pitch, one value per semitone. Reading bins
-    // instead smears a bass note over its neighbours, and high notes (which span many
-    // more bins) would drown the bass in overtones.
-    let midi_of = |hz: f32| 69.0 + 12.0 * (hz / reference).log2();
-    let (n_lo, n_hi) = (midi_of(lo as f32 * bin_hz).ceil() as i32, midi_of(hi as f32 * bin_hz).floor() as i32);
-    let mut vals = vec![0.0f32; (n_hi - n_lo + 1).max(0) as usize];
-
-    // 10 s segments, each normalised, summed by loudness; scores summed over segments.
-    let per_seg = ((10.0 * RATE) / HOP as f32) as usize;
-    let mut total = [0.0f32; 24];
-    let mut sum = [0.0f32; 12];
-    let mut any = false;
-    for seg in harm.chunks(per_seg.max(1)) {
-        let mut chroma = [0.0f32; 12];
-        for f in seg {
-            vals.fill(0.0);
-            for k in lo + 1..hi {
-                let (a, b, c) = (f[k - 1], f[k], f[k + 1]);
-                if b > a && b >= c && b > 0.0 {
-                    let d = 0.5 * (a - c) / (a - 2.0 * b + c);
-                    let m = midi_of((k as f32 + d) * bin_hz);
-                    let n = m.round() as i32;
-                    let w = (std::f32::consts::PI * (m - n as f32)).cos().powi(2);
-                    if let Some(v) = usize::try_from(n - n_lo).ok().and_then(|i| vals.get_mut(i)) {
-                        *v = v.max((b - 0.25 * (a - c) * d) * w);
-                    }
-                }
-            }
-            // Take each note's overtones (octave, fifth, 2nd octave, major third...) off the
-            // notes above it, lowest first: a bass note's 5th harmonic otherwise reads as a
-            // major third and turns minor keys major.
-            for i in 0..vals.len() {
-                let v = vals[i];
-                for (up, share) in HARMONICS {
-                    if let Some(h) = vals.get_mut(i + up) {
-                        *h = (*h - v * share).max(0.0);
-                    }
-                }
-            }
-            for (i, v) in vals.iter().enumerate() {
-                let n = n_lo + i as i32;
-                // Above C6 it's mostly overtones; trust it less.
-                chroma[n.rem_euclid(12) as usize] += if n < 84 { *v } else { 0.6 * v };
-            }
-        }
-        let energy: f32 = chroma.iter().sum();
-        if energy <= 0.0 {
-            continue;
-        }
-        any = true;
-        for (t, s) in total.iter_mut().zip(key_scores(&chroma)) {
-            *t += s * energy;
-        }
-        for (s, c) in sum.iter_mut().zip(chroma) {
-            *s += c;
-        }
-    }
-    if !any {
-        return None;
-    }
-    decide(&total, &sum)
-}
-
-/// The key from profile scores over 24 keys and the pitch-class levels they came from.
-fn decide(total: &[f32; 24], sum: &[f32; 12]) -> Option<(Key, f32)> {
-    // Tonic from the best-fitting key profile; major or minor from the notes that tell
-    // them apart (3rd, 6th and 7th above the tonic). The profiles alone call minor
-    // melodies major when they skip the third. Measured on 250 producer loops named with
-    // their key (97% minor), leaning towards minor by MINOR_LEAN gained ~5 points.
-    let t = (0..24).max_by(|a, b| total[*a].total_cmp(&total[*b]))? % 12;
-    let c = |i: usize| sum[(t + i) % 12];
-    let (minor, major) = ((c(3) + c(8) + c(10)) * MINOR_LEAN, c(4) + c(9) + c(11));
-    let margin = (minor - major).abs() / (minor + major).max(1e-9);
-    // Phrygian: the flat second is played clearly and the natural second hardly at all
-    // (natural minor is the other way round). Measured on 29 Phrygian loops and 113 major
-    // or minor ones: 15 Phrygian named right (from none), 3 others lost to it.
-    let phrygian = c(1) > PHRYGIAN_RATIO * c(2) && c(1) > PHRYGIAN_SHARE * (c(0) + c(3) + c(7)) / 3.0;
-    Some((Key { tonic: t as u8, minor: minor >= major || phrygian, phrygian }, margin))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn reads_key_notations() {
-        let k = |s: &str| parse_key(s).map(|k| k.name());
-        assert_eq!(k("Am"), Some("Am"));
-        assert_eq!(k("A minor"), Some("Am"));
-        assert_eq!(k("G#Min"), Some("G#m"));
-        assert_eq!(k("CsMin"), Some("C#m"));
-        assert_eq!(k("dmin"), Some("Dm"));
-        assert_eq!(k("Bb"), Some("Bbmaj"));
-        assert_eq!(k("Bmin"), Some("Bm"));
-        assert_eq!(k("F# major"), Some("F#maj"));
-        assert_eq!(k("Dbmaj"), Some("Dbmaj"));
-        assert_eq!(k("8A"), Some("Am"));
-        assert_eq!(k("8B"), Some("Cmaj"));
-        assert_eq!(k("1A"), Some("G#m"));
-        assert_eq!(k("12B"), Some("Emaj"));
-        assert_eq!(k("Dphy"), Some("Dphy"));
-        assert_eq!(k("DsPHY"), Some("Dsphy"));
-        assert_eq!(k("CSMIN"), Some("C#m"));
-        assert_eq!(k("DBmin"), Some("C#m"));
-        assert_eq!(k("dbphy"), Some("Csphy"));
-        assert_eq!(k("C min phy"), Some("Cphy"));
-        assert_eq!(k("hello"), None);
-    }
-
-    #[test]
     fn tags_win_and_names_stay_tidy() {
         let err = "  Metadata:\n    TBPM            : 128\n    TKEY            : 5A\n  Duration: 00:03:00.00";
-        let (b, k) = parse_tags(err);
-        assert_eq!((b, k.map(|k| k.name())), (Some(128), Some("Cm")));
-        assert_eq!(tagged_stem("Song", Some(124), parse_key("Am")), "Song 124 BPM Am");
-        assert_eq!(tagged_stem("Song", None, parse_key("Am")), "Song Am");
-        assert_eq!(tagged_stem("Song", Some(90), None), "Song 90 BPM");
-        assert_eq!(tagged_stem("Loop 140BPM", Some(140), parse_key("Gm")), "Loop 140BPM Gm");
-        assert_eq!(tagged_stem("Song", None, None), "Song");
-        // Already named (by us or by the producer): nothing doubled.
-        assert_eq!(tagged_stem("Beat 117 BPM C", Some(117), parse_key("C")), "Beat 117 BPM C");
-        assert_eq!(tagged_stem("Beat 117 BPM Cmaj", Some(140), parse_key("Am")), "Beat 117 BPM Cmaj");
-        assert_eq!(tagged_stem("SCH 146 Dphy @1onazz", Some(146), parse_key("Dm")), "SCH 146 Dphy @1onazz");
-        assert_eq!(tagged_stem("Melody 140BPM G#Min", Some(140), parse_key("Am")), "Melody 140BPM G#Min");
-        assert_eq!(tagged_stem("Loop 140BPM", Some(140), parse_key("Gm")), "Loop 140BPM Gm");
-        // A number alone is not a tempo, a common word is not a key.
-        assert_eq!(tagged_stem("Track 101", Some(120), parse_key("Am")), "Track 101 120 BPM Am");
-        assert_eq!(tagged_stem("I Am Here", Some(120), parse_key("Dm")), "I Am Here 120 BPM Dm");
-        assert_eq!(tagged_stem("Track 101 x Amin", Some(140), parse_key("Am")), "Track 101 x Amin 140 BPM");
+        assert_eq!(parse_tags(err), Some(128));
+        assert_eq!(parse_tags("  Duration: 00:03:00.00"), None);
+        assert_eq!(tagged_stem("Song", Some(124)), "Song 124 BPM");
+        assert_eq!(tagged_stem("Song", None), "Song");
+        // Already named (by us or by the producer): nothing doubled, keys left as written.
+        assert_eq!(tagged_stem("Beat 117 BPM C", Some(117)), "Beat 117 BPM C");
+        assert_eq!(tagged_stem("Loop 140BPM", Some(140)), "Loop 140BPM");
+        assert_eq!(tagged_stem("SCH 146 Dphy @1onazz", Some(146)), "SCH 146 Dphy @1onazz");
+        assert_eq!(tagged_stem("Melody 140BPM G#Min", Some(141)), "Melody 140BPM G#Min");
+        assert_eq!(tagged_stem("MP 127Cbmin @1onazz", Some(127)), "MP 127Cbmin @1onazz");
+        // A number alone is not a tempo.
+        assert_eq!(tagged_stem("Track 101", Some(120)), "Track 101 120 BPM");
+        assert_eq!(tagged_stem("Track 101 x Amin", Some(140)), "Track 101 x Amin 140 BPM");
     }
 
     #[test]
-    fn retags_in_place() {
-        let r = |s: &str, b: u32, k: &str| retag(s, Some(b), parse_key(k));
-        // Producer names, rewritten where the tags stood.
-        assert_eq!(r("ANIME 140 gsMIN 1onazzz", 140, "Fm").as_deref(), Some("ANIME 140 BPM Fm 1onazzz"));
-        assert_eq!(r("(hard, dark) gnarly 156bpm abmin @1hellion_", 156, "Fm").as_deref(), Some("(hard, dark) gnarly 156 BPM Fm @1hellion_"));
-        assert_eq!(r("betrayal - 126 - Fmin @tr1pleq", 126, "Cm").as_deref(), Some("betrayal - 126 BPM Cm - @tr1pleq"));
-        assert_eq!(r("MP 127Cbmin @1onazz", 127, "Dm").as_deref(), Some("MP 127 BPM Dm @1onazz"));
-        assert_eq!(r("@nioh @1onazz - Loyal Member bpm 130 key D min", 130, "Fm").as_deref(), Some("@nioh @1onazz - Loyal Member 130 BPM Fm"));
-        assert_eq!(r("JRAZZZY 119 BPM DbMIN @1onazz", 119, "Ebm").as_deref(), Some("JRAZZZY 119 BPM Ebm @1onazz"));
-        // Our own earlier tag after the producer's: both replaced by one.
-        assert_eq!(r("CLOUD 140 CSMIN 140 BPM Amaj", 140, "C#m").as_deref(), Some("CLOUD 140 BPM C#m"));
-        // Already right (any spelling): nothing to save.
-        assert_eq!(r("ANIME 140 gsMIN 1onazzz", 140, "G#m"), None);
-        assert_eq!(r("Song 124 BPM Am", 124, "Am"), None);
-        // Nothing in the name yet: added at the end, words that look like keys left alone.
-        assert_eq!(r("I Am Here", 120, "Dm").as_deref(), Some("I Am Here 120 BPM Dm"));
-        // Only the key found: the name's tempo stays.
-        assert_eq!(retag("Loop 140BPM G#Min", None, parse_key("Am")).as_deref(), Some("Loop 140 BPM Am"));
+    fn retags_the_tempo_in_place() {
+        // A wrong tempo is replaced where it stood; keys and everything else stay.
+        assert_eq!(retag("ANIME 140 gsMIN 1onazzz", 141).as_deref(), Some("ANIME 141 BPM gsMIN 1onazzz"));
+        assert_eq!(retag("(hard, dark) gnarly 156bpm abmin @1hellion_", 155).as_deref(), Some("(hard, dark) gnarly 155 BPM abmin @1hellion_"));
+        assert_eq!(retag("betrayal - 126 - Fmin @tr1pleq", 127).as_deref(), Some("betrayal - 127 BPM - Fmin @tr1pleq"));
+        assert_eq!(retag("MP 127Cbmin @1onazz", 128).as_deref(), Some("MP 128 BPM Cbmin @1onazz"));
+        assert_eq!(retag("@nioh - Loyal Member bpm 130 key D min", 131).as_deref(), Some("@nioh - Loyal Member 131 BPM key D min"));
+        assert_eq!(retag("JRAZZZY 119 BPM DbMIN @1onazz", 120).as_deref(), Some("JRAZZZY 120 BPM DbMIN @1onazz"));
+        // Two tempos in a name (an older tag too): one is left, at the first.
+        assert_eq!(retag("CLOUD 140 CSMIN 140 BPM Amaj", 141).as_deref(), Some("CLOUD 141 BPM CSMIN Amaj"));
+        // Already right: nothing to save.
+        assert_eq!(retag("ANIME 140 gsMIN 1onazzz", 140), None);
+        assert_eq!(retag("Song 124 BPM", 124), None);
+        // Nothing in the name yet: added at the end.
+        assert_eq!(retag("I Am Here", 120).as_deref(), Some("I Am Here 120 BPM"));
     }
 
     /// A rich tone (decaying harmonics) at `midi`, `secs` long, added into `out` at `start`.
@@ -912,36 +467,5 @@ mod tests {
             }
         }
         assert_eq!(tempo(&x), Some(147));
-    }
-
-    #[test]
-    fn finds_major_and_minor_keys() {
-        // C major: C F G C.  A minor: Am Dm E Am (harmonic minor's raised G#).
-        let c_major: [&[f32]; 4] = [&[60.0, 64.0, 67.0], &[65.0, 69.0, 72.0], &[67.0, 71.0, 74.0], &[60.0, 64.0, 67.0]];
-        let a_minor: [&[f32]; 4] = [&[57.0, 60.0, 64.0], &[62.0, 65.0, 69.0], &[64.0, 68.0, 71.0], &[57.0, 60.0, 64.0]];
-        assert_eq!(key(&song(120.0, &c_major, 16)).map(|k| k.name()), Some("Cmaj"));
-        assert_eq!(key(&song(120.0, &a_minor, 16)).map(|k| k.name()), Some("Am"));
-        // Transposed and detuned by +30 cents: F#m.
-        let fs_minor: Vec<Vec<f32>> = a_minor.iter().map(|ch| ch.iter().map(|m| m - 3.0 + 0.3).collect()).collect();
-        let refs: Vec<&[f32]> = fs_minor.iter().map(|v| v.as_slice()).collect();
-        assert_eq!(key(&song(100.0, &refs, 16)).map(|k| k.name()), Some("F#m"));
-        // E Phrygian, the trap move: Em to F (the flat second) and back.
-        let e_phrygian: [&[f32]; 4] = [&[40.0, 52.0, 55.0, 59.0], &[41.0, 53.0, 57.0, 60.0], &[40.0, 52.0, 55.0, 59.0], &[40.0, 52.0, 55.0, 59.0]];
-        assert_eq!(key(&song(140.0, &e_phrygian, 16)).map(|k| k.name()), Some("Ephy"));
-    }
-
-    #[test]
-    fn measures_and_undoes_detuning() {
-        // A minor progression 35 cents sharp, like a sped-up record.
-        let sharp: Vec<Vec<f32>> = [[57.0, 60.0, 64.0], [62.0, 65.0, 69.0], [64.0, 68.0, 71.0], [57.0, 60.0, 64.0]]
-            .iter()
-            .map(|ch| ch.iter().map(|m| m + 0.35).collect())
-            .collect();
-        let refs: Vec<&[f32]> = sharp.iter().map(|v| v.as_slice()).collect();
-        let x = song(100.0, &refs, 16);
-        let cents = tuning_cents(&x);
-        assert!((cents - 35.0).abs() < 6.0, "{cents}");
-        assert!(tuning_cents(&retuned(&x, cents)).abs() < 6.0);
-        assert!(tuning_cents(&song(100.0, &refs.iter().map(|_| &[57.0f32, 60.0, 64.0][..]).collect::<Vec<_>>(), 8)).abs() < 6.0);
     }
 }

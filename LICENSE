@@ -91,5 +91,5 @@ The licences above cover the code, not the con/vert name or logo. A changed
 version you share must use a different name, so nobody mistakes it for the
 original.
 
-Other components (FFmpeg, Spotify's Basic Pitch model and the libraries listed
+Other components (FFmpeg and the libraries listed
 in THIRD_PARTY_NOTICES.txt) keep their own licences.

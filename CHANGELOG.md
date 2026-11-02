@@ -3,6 +3,14 @@
 All notable changes to con/vert. Releases before con/vert are File Beaver's, the project
 con/vert is built on.
 
+## 1.0.4 (3 November 2026)
+
+- Key detection is gone. Measured on 1757 files it was right only about 60% of the time,
+  and a wrong key in a file name does more harm than none. Converted files are named with
+  their tempo only ("Song 124 BPM.mp3"); the "BPM + Key" tool is now "BPM". Keys you wrote
+  in your own file names are left as they are.
+- The installer is smaller: the note model used for keys is no longer bundled.
+
 ## 1.0.3 (3 November 2026)
 
 - Key detection retuned on 1757 files with known keys: 837 songs from ten genres (GTZAN),

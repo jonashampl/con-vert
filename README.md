@@ -6,13 +6,17 @@
 
 <p align="center">
   <b>Drag a file, tap Shift, done.</b><br>
-  Convert audio, read a loop's tempo and key, and convert or edit images and PDFs,<br>
+  Convert audio, read a loop's tempo, and convert or edit images and PDFs,<br>
   right on your Windows desktop. Free and offline.
 </p>
 
 <p align="center">
   <a href="https://github.com/jonashampl/con-vert/releases/latest"><b>Download for Windows</b></a> ·
   by <b>Jonas J. Hampl</b> · Instagram <a href="https://instagram.com/1onazz">@1onazz</a>
+</p>
+
+<p align="center">
+  <img src="branding/demo/demo.gif" width="800" alt="A WAV is dragged onto the glass icon, the ring opens, it's dropped on MP3 and a 'Saved' card appears">
 </p>
 
 ## What it does
@@ -22,10 +26,10 @@ new file next to the original, so the original is never changed.
 
 **Audio and video**
 
-- **Convert** to MP3, WAV, FLAC, M4A, OGG, OPUS or AAC (video files give their sound).
-- **BPM + Key** saves a copy named with the tempo and key, for example
-  `Loop 146 BPM Dphy.wav`. Tuned for the scales producers use most: major, minor and
-  Phrygian.
+- **Convert** to MP3, WAV, FLAC, M4A, OGG, OPUS or AAC (video files give their sound),
+  named with the tempo: `Loop 146 BPM.mp3`.
+- **BPM** saves a copy named with the tempo, for example `Loop 146 BPM.wav`. A wrong tempo
+  already in the name is corrected where it stands.
 - **Compress** makes a smaller file in the same format (WAV becomes FLAC, lossless).
 - **Cover** saves a track's album art as a JPG.
 - **Zip** packs several files into one archive.
@@ -87,9 +91,7 @@ con/vert is made by **Jonas J. Hampl** ([@1onazz](https://instagram.com/1onazz))
 
 It is built on [File Beaver](https://github.com/DEVIOUSDEV101/file-beaver) by
 **DEVIOUSDEV101**, who created it and shared it as open source. Thank you! Audio is handled
-by [FFmpeg](https://ffmpeg.org) (LGPL), key detection uses Spotify's
-[Basic Pitch](https://github.com/spotify/basic-pitch) model (Apache-2.0), and icons are by
-[Lucide](https://lucide.dev). Every component's licence is in
+by [FFmpeg](https://ffmpeg.org) (LGPL), and icons are by [Lucide](https://lucide.dev). Every component's licence is in
 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
 
 ## Licence

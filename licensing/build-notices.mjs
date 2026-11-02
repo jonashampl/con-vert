@@ -35,14 +35,6 @@ for (const f of ["COPYING", "PATENTS"]) {
 //     https://github.com/BtbN/FFmpeg-Builds).
 parts.push(`${rule}\nFFmpeg 9.0 (bundled ffmpeg.exe, LGPL v3 build) - https://ffmpeg.org\n${rule}\n\n${readFileSync(join(here, "ffmpeg-LICENSE.txt"), "utf8").trimEnd()}`);
 
-// 2c. Basic Pitch note model (Apache-2.0), compiled into the app for key detection.
-parts.push(`${rule}
-Basic Pitch note model (models/basic-pitch-nmp.onnx, built into con-vert.exe)
-Copyright 2022 Spotify AB - https://github.com/spotify/basic-pitch
-${rule}
-
-${readFileSync(join(here, "basic-pitch-LICENSE.txt"), "utf8").trimEnd()}`);
-
 // 3. npm packages in the shipped UI bundle
 const tree = JSON.parse(execSync("npm ls --omit=dev --all --json", { cwd: app, encoding: "utf8" }));
 const seen = new Map();

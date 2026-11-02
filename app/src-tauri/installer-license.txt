@@ -15,11 +15,10 @@ as open source by DEVIOUSDEV101:
 
 Thank you, DEVIOUSDEV101, for creating File Beaver and sharing it. con/vert
 keeps everything File Beaver does with images and PDFs and adds audio and
-video: format conversion, tempo and key detection, and audio tools. File
-Beaver's own code stays under its original MIT License.
+video: format conversion, tempo detection, and audio tools. File Beaver's
+own code stays under its original MIT License.
 
 Audio and video are handled by FFmpeg (LGPL v3), installed alongside the app.
-Key detection uses Spotify's Basic Pitch note model (Apache-2.0).
 The licences of FFmpeg and every other component are in THIRD_PARTY_NOTICES.txt
 and ffmpeg-LICENSE.txt in the install folder.
 
@@ -120,5 +119,5 @@ The licences above cover the code, not the con/vert name or logo. A changed
 version you share must use a different name, so nobody mistakes it for the
 original.
 
-Other components (FFmpeg, Spotify's Basic Pitch model and the libraries listed
+Other components (FFmpeg and the libraries listed
 in THIRD_PARTY_NOTICES.txt) keep their own licences.
