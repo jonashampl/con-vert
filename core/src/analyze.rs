@@ -543,10 +543,10 @@ fn key_scores(chroma: &[f32; 12]) -> [f32; 24] {
 /// purpose: distorted 808s and saws carry loud overtones (measured best at these values).
 const HARMONICS: [(usize, f32); 7] = [(12, 1.0), (19, 0.8), (24, 0.6), (28, 0.5), (31, 0.4), (34, 0.3), (36, 0.24)];
 /// How much more the minor-scale notes count when deciding major or minor. These three
-/// were chosen on 1336 files with known keys: GTZAN songs (837, ten genres), GiantSteps EDM
-/// (285), kit loops (154, 27 Phrygian) and a producer's own beats (33). Against the earlier
-/// 2 / 2 / 0.2: 57.6% -> 61.1% exact overall, songs 58.5 -> 63.1, EDM 54.4 -> 60.0, beats
-/// 66.7 -> 63.6, kit loops 56.6 -> 53.1; false Phrygian calls 85 -> 32 (true ones 16 -> 11).
+/// were chosen on 1757 files with known keys: GTZAN songs (837, ten genres), GiantSteps EDM
+/// (604), kit loops (283, 26 Phrygian) and a producer's own beats (33). Against the earlier
+/// 2 / 2 / 0.2: 56.0% -> 59.8% exact overall, songs 58.5 -> 63.1, EDM 52.3 -> 58.3, beats
+/// 66.7 -> 63.6, kit loops 55.1 -> 53.0; false Phrygian calls 124 -> 49 (true ones 16 -> 11).
 const MINOR_LEAN: f32 = 1.6;
 /// Phrygian when the flat second outweighs the natural one by this much (in real Phrygian
 /// the natural second is hardly played)...
