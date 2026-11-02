@@ -1,5 +1,6 @@
 //! End-to-end checks against the running app for the problems found in daily use:
 //! 1. a mouse drag that isn't a file drag (moving notes in FL Studio) + Shift: no ring;
+//! 1b. a file drag from an app other than Explorer (FL Studio's browser) + Shift: no ring;
 //! 2. move the icon, then right away drag a file onto it and hold still: the ring stays;
 //! 3. Shift while still holding the file: the ring flips to its second page;
 //! 4. let go on the icon, click the hub: flips again in click mode; Esc closes.
@@ -142,6 +143,32 @@ fn main() -> Result<()> {
         report("1. Shift during a non-file drag shows no ring", !seen);
         pump(400);
 
+        // ---- 1b. a file drag from another app (this one, not Explorer) + Shift: no ring ----
+        let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(file.as_str()), None::<&IBindCtx>)?;
+        let data: IDataObject = item.BindToHandler(None, &BHID_DataObject)?;
+        let source: IDropSource = Source.into();
+        mouse(MOUSE_EVENT_FLAGS(0), start.0, start.1);
+        pump(100);
+        mouse(MOUSEEVENTF_LEFTDOWN, start.0, start.1);
+        pump(100);
+        std::thread::spawn(move || {
+            sleep(Duration::from_millis(200));
+            glide(start, (start.0 + 80, start.1 + 40));
+            tap(VK_SHIFT);
+            let t0 = Instant::now();
+            let mut seen = false;
+            while t0.elapsed() < Duration::from_millis(900) {
+                seen |= ring_visible();
+                sleep(Duration::from_millis(30));
+            }
+            report("1b. Shift during a file drag from another app shows no ring", !seen);
+            tap(VK_ESCAPE);
+            mouse(MOUSEEVENTF_LEFTUP, start.0 + 80, start.1 + 40);
+        });
+        let mut effect = DROPEFFECT::default();
+        let _ = DoDragDrop(&data, &source, DROPEFFECT_COPY | DROPEFFECT_MOVE, &mut effect);
+        pump(400);
+
         // ---- 2. move the icon, then at once drag a file onto it and hold still ----
         mouse(MOUSE_EVENT_FLAGS(0), home.0, home.1);
         sleep(Duration::from_millis(100));
@@ -154,9 +181,6 @@ fn main() -> Result<()> {
         let icon = center(rect_of(b));
         println!("icon moved to {icon:?}");
 
-        let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(file.as_str()), None::<&IBindCtx>)?;
-        let data: IDataObject = item.BindToHandler(None, &BHID_DataObject)?;
-        let source: IDropSource = Source.into();
         mouse(MOUSE_EVENT_FLAGS(0), start.0, start.1);
         pump(100);
         mouse(MOUSEEVENTF_LEFTDOWN, start.0, start.1);

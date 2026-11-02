@@ -143,6 +143,10 @@ static DOWN_Y: AtomicI32 = AtomicI32::new(0);
 static DOWN_THREAD: AtomicU32 = AtomicU32::new(0);
 /// The button went down on the desktop itself (dragging desktop icons).
 static DOWN_ON_DESKTOP: AtomicBool = AtomicBool::new(false);
+/// The button went down in Explorer (a folder window or the desktop): only drags from there
+/// open the ring on the trigger key. In other apps (FL Studio's browser) Shift means
+/// something of their own; their files can still go onto the icon.
+static DOWN_IN_EXPLORER: AtomicBool = AtomicBool::new(false);
 static CENTER_X: AtomicI32 = AtomicI32::new(0);
 static CENTER_Y: AtomicI32 = AtomicI32::new(0);
 /// Ring radius in physical pixels for the monitor it is on.
@@ -772,6 +776,21 @@ fn is_desktop(h: HWND) -> bool {
     matches!(String::from_utf16_lossy(&name[..n]).as_str(), "Progman" | "WorkerW")
 }
 
+/// The window belongs to explorer.exe (folder windows and the desktop).
+fn is_explorer(h: HWND) -> bool {
+    use windows::Win32::System::Threading::*;
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(h, Some(&mut pid));
+        let Ok(p) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        let mut buf = [0u16; 260];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(p);
+        ok && String::from_utf16_lossy(&buf[..len as usize]).to_ascii_lowercase().ends_with("\\explorer.exe")
+    }
+}
+
 /// True while some app is running an OLE drag-and-drop: its thread hands mouse capture to
 /// OLE's hidden clipboard window for the whole drag. Window moves and text selections don't.
 /// Checks the thread the drag started on (which needn't be the foreground one) and the
@@ -843,6 +862,12 @@ unsafe fn wndproc_body(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             // window or a text selection must not. The invisible drop target goes under the
             // cursor first; the ring is drawn when Windows hands it a file drag (DragEnter).
             WM_APP_ARM => {
+                // WM_APP_DRAG_WATCH, posted when the drag began, has already set this.
+                if !DOWN_IN_EXPLORER.load(SeqCst) {
+                    SHOWN.store(false, SeqCst);
+                    log::info!("trigger key during a drag from another app, ring not shown");
+                    return LRESULT(0);
+                }
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
                 *ARMED_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some((pt.x, pt.y));
@@ -899,6 +924,7 @@ unsafe fn wndproc_body(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 let under = WindowFromPoint(POINT { x: DOWN_X.load(SeqCst), y: DOWN_Y.load(SeqCst) });
                 DOWN_THREAD.store(GetWindowThreadProcessId(under, None), SeqCst);
                 DOWN_ON_DESKTOP.store(is_desktop(under), SeqCst);
+                DOWN_IN_EXPLORER.store(is_explorer(under), SeqCst);
                 DRAG_TAIL.store(0, SeqCst);
                 SetTimer(hwnd, TIMER_DRAG_WATCH, DRAG_WATCH_MS, None);
                 LRESULT(0)
