@@ -38,28 +38,13 @@ fn model() -> Option<&'static Model> {
         .as_ref()
 }
 
-/// A low note's 5th harmonic, two octaves and a major third up: loud in distorted 808s, and
-/// the model hears it as a note, which turned minor beats major. Taken off frame by frame.
-/// Measured on 33 of a producer's own beats and 262 kit loops: 58% -> 67% and 53% -> 55%
-/// keys right (with MINOR_LEAN 2), neither set worse.
-const OVERTONE: usize = 28;
-/// Only notes below this (C4) count as its source: basses and 808s.
-const BASS_BELOW: usize = 60;
-
 /// How strongly each pitch class (0 = C) sounds across `x` (mono, 22050 Hz), summed over
-/// active notes. None if the model can't run or hears no notes.
+/// active notes. None if the model can't run or hears no notes. (Taking a bass note's 5th
+/// harmonic off helped trap beats but cost songs and EDM more: measured on 1336 files.)
 pub fn chroma(x: &[f32]) -> Option<[f32; 12]> {
     let mut out = [0.0f32; 12];
     for frame in activations(x)? {
-        let mut notes = frame;
-        for k in 0..BASS_BELOW - 21 {
-            if frame[k] > ACTIVE {
-                if let Some(h) = notes.get_mut(k + OVERTONE) {
-                    *h = (*h - frame[k]).max(0.0);
-                }
-            }
-        }
-        for (k, v) in notes.into_iter().enumerate() {
+        for (k, v) in frame.into_iter().enumerate() {
             if v > ACTIVE {
                 out[(21 + k) % 12] += v;
             }
