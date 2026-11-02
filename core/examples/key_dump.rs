@@ -83,6 +83,9 @@ fn main() {
         let v1 = suppressed(&frames, &[(28, 1.0)], 60);
         let keys = per_key(&frames);
         let segs: Vec<[f32; 12]> = frames.chunks(860).map(|c| suppressed(c, &[(28, 1.0)], 60)).collect();
-        println!("{{\"truth\":\"{}\",\"ch\":{ch:?},\"v1\":{v1:?},\"p88\":{keys:?},\"segs\":{segs:?}}}", truth.name());
+        // Retuned to A = 440 and, for long files, heard in parts across the song ("k1").
+        let cents = analyze::tuning_cents(&pcm);
+        let k1 = notes::activations(&analyze::key_input(&pcm)).map(|f| suppressed(&f, &[(28, 1.0)], 60)).unwrap_or(v1);
+        println!("{{\"src\":{:?},\"truth\":\"{}\",\"cents\":{cents:.1},\"secs\":{:.1},\"ch\":{ch:?},\"v1\":{v1:?},\"k1\":{k1:?},\"p88\":{keys:?},\"segs\":{segs:?}}}", path, truth.name(), pcm.len() as f32 / analyze::RATE);
     }
 }

@@ -578,6 +578,67 @@ pub fn key_scored(x: &[f32]) -> Option<(Key, f32)> {
     }
 }
 
+/// How far the recording sits from A = 440 Hz, in cents (-50..50): where the spectral peaks
+/// fall between semitones, weighted by their level, over the first minute. Old records,
+/// tape and sped-up rips often sit between two semitones, which the note model would split.
+pub fn tuning_cents(x: &[f32]) -> f32 {
+    const SIZE: usize = 16384;
+    let bin_hz = RATE / SIZE as f32;
+    let (lo, hi) = ((60.0 / bin_hz) as usize, (2000.0 / bin_hz) as usize);
+    let (mut cs, mut sn) = (0.0f32, 0.0f32);
+    for f in spectrogram(&x[..x.len().min(60 * RATE as usize)], SIZE, SIZE / 2, hi + 2) {
+        for k in lo + 1..hi {
+            let (a, b, c) = (f[k - 1], f[k], f[k + 1]);
+            if b > a && b > c {
+                let d = 0.5 * (a - c) / (a - 2.0 * b + c);
+                let cents = 1200.0 * ((k as f32 + d) * bin_hz / 440.0).log2();
+                let ang = cents / 100.0 * 2.0 * std::f32::consts::PI;
+                cs += b * ang.cos();
+                sn += b * ang.sin();
+            }
+        }
+    }
+    sn.atan2(cs) / (2.0 * std::f32::consts::PI) * 100.0
+}
+
+/// `x` played back `cents` lower (linear interpolation), so its notes land on the A = 440
+/// grid. The length changes by the same tiny ratio.
+pub fn retuned(x: &[f32], cents: f32) -> Vec<f32> {
+    let step = 2f32.powf(-cents / 1200.0);
+    let n = ((x.len() as f32 - 1.0) / step) as usize;
+    (0..n)
+        .map(|i| {
+            let p = i as f32 * step;
+            let (j, f) = (p as usize, p.fract());
+            x[j] * (1.0 - f) + x.get(j + 1).copied().unwrap_or(0.0) * f
+        })
+        .collect()
+}
+
+/// What the note model listens to: songs longer than the model's budget are heard in three
+/// parts spread across them (intro, middle, late), not just the first 90 s; then retuned to
+/// A = 440 when they're off by more than a few cents.
+pub fn key_input(x: &[f32]) -> std::borrow::Cow<'_, [f32]> {
+    const PART: usize = 30 * RATE as usize;
+    let mut x = std::borrow::Cow::Borrowed(x);
+    if x.len() > 3 * PART + 2 * RATE as usize {
+        let n = x.len();
+        let parts: Vec<f32> = [0.1, 0.45, 0.8]
+            .iter()
+            .flat_map(|at| {
+                let s = ((n as f32 * at) as usize).min(n - PART);
+                x[s..s + PART].to_vec()
+            })
+            .collect();
+        x = std::borrow::Cow::Owned(parts);
+    }
+    let cents = tuning_cents(&x);
+    if cents.abs() > 8.0 {
+        x = std::borrow::Cow::Owned(retuned(&x, cents));
+    }
+    x
+}
+
 /// Key from the harmonic spectrum alone (the method before the note model).
 fn spectrum_key(x: &[f32]) -> Option<(Key, f32)> {
     const SIZE: usize = 16384;
@@ -862,5 +923,20 @@ mod tests {
         // E Phrygian, the trap move: Em to F (the flat second) and back.
         let e_phrygian: [&[f32]; 4] = [&[40.0, 52.0, 55.0, 59.0], &[41.0, 53.0, 57.0, 60.0], &[40.0, 52.0, 55.0, 59.0], &[40.0, 52.0, 55.0, 59.0]];
         assert_eq!(key(&song(140.0, &e_phrygian, 16)).map(|k| k.name()), Some("Ephy"));
+    }
+
+    #[test]
+    fn measures_and_undoes_detuning() {
+        // A minor progression 35 cents sharp, like a sped-up record.
+        let sharp: Vec<Vec<f32>> = [[57.0, 60.0, 64.0], [62.0, 65.0, 69.0], [64.0, 68.0, 71.0], [57.0, 60.0, 64.0]]
+            .iter()
+            .map(|ch| ch.iter().map(|m| m + 0.35).collect())
+            .collect();
+        let refs: Vec<&[f32]> = sharp.iter().map(|v| v.as_slice()).collect();
+        let x = song(100.0, &refs, 16);
+        let cents = tuning_cents(&x);
+        assert!((cents - 35.0).abs() < 6.0, "{cents}");
+        assert!(tuning_cents(&retuned(&x, cents)).abs() < 6.0);
+        assert!(tuning_cents(&song(100.0, &refs.iter().map(|_| &[57.0f32, 60.0, 64.0][..]).collect::<Vec<_>>(), 8)).abs() < 6.0);
     }
 }
